@@ -68,10 +68,24 @@ You MUST respond with valid JSON only. No prose outside the JSON object.
   }
 }
 
-For system events (rolls, loot, status), set the "system" field:
-- Skill check: { "type": "skill_check", "skill": "Perception", "dc": 15 }
+## Skill Checks and Dice — CRITICAL RULES
+NEVER mention dice, rolls, modifiers, or DCs in narration or npc_dialogue text. The app has a built-in dice roller UI — when you set the system field for a skill_check, the dice roller appears automatically. If you describe a roll in text, the player cannot roll and the story breaks.
+
+CORRECT — player tries to pick a lock:
+  narration: "The lock is old but stubborn. A skilled hand might coax it open."
+  system: { "type": "skill_check", "skill": "Thieves' Tools", "dc": 14, "ability": "DEX" }
+
+WRONG — never do this:
+  narration: "Make a Dexterity check DC 14. Roll a d20 and add your modifier."
+
+When to set system to skill_check:
+- Player attempts something with a meaningful chance of failure (climbing, persuading, sneaking, noticing hidden things, lying, picking locks, etc.)
+- Do NOT call for a check on trivial actions or things the character is clearly capable of.
+- Include the "ability" field: STR, DEX, CON, INT, WIS, or CHA.
+
+For other system events, set the "system" field:
 - Loot found: { "type": "loot", "items": ["Item 1", "Item 2"], "gold": 0 }
-- Combat: { "type": "combat", "detail": "description of combat result" }
+- Combat result: { "type": "combat", "detail": "brief description" }
 - Status change: { "type": "status", "detail": "what changed" }
 
 When an NPC speaks, put their dialogue in npc_dialogue. Keep narration brief if NPCs are speaking.
@@ -158,9 +172,17 @@ export function parseDMResponse(raw) {
 
   try {
     const parsed = JSON.parse(cleaned);
+    // Normalize npc_dialogue: model sometimes returns object instead of array
+    let npcDialogue = [];
+    if (Array.isArray(parsed.npc_dialogue)) {
+      npcDialogue = parsed.npc_dialogue;
+    } else if (parsed.npc_dialogue && typeof parsed.npc_dialogue === 'object') {
+      npcDialogue = [parsed.npc_dialogue];
+    }
+
     return {
       narration: parsed.narration || '',
-      npc_dialogue: Array.isArray(parsed.npc_dialogue) ? parsed.npc_dialogue : [],
+      npc_dialogue: npcDialogue,
       system: parsed.system || null,
       suggested_actions: Array.isArray(parsed.suggested_actions) ? parsed.suggested_actions.slice(0, 4) : [],
       state_updates: parsed.state_updates || { flags: {}, npc_updates: [], hp_change: null, loot: null },

@@ -433,7 +433,7 @@ const styles = StyleSheet.create({
   totalText: { fontSize: 56, fontWeight: '900', lineHeight: 64 },
   badgePill: { borderWidth: 1.5, borderRadius: RADIUS.pill, paddingHorizontal: 16, paddingVertical: 5, marginTop: SPACING.xs },
   badgeText: { fontSize: 14, fontWeight: '800', letterSpacing: 1 },
-  dcText: { color: COLORS.textDim, fontSize: 12, marginTop: 4 },
+  dcText: { color: COLORS.textMuted, fontSize: 12, marginTop: 4 },
 
   ctaRow: { marginBottom: SPACING.xs },
   rollBtn: { backgroundColor: COLORS.primary, borderRadius: RADIUS.md, paddingVertical: 16, alignItems: 'center' },
@@ -441,7 +441,7 @@ const styles = StyleSheet.create({
   confirmBtn: { backgroundColor: COLORS.success + '33', borderRadius: RADIUS.md, paddingVertical: 16, alignItems: 'center', borderWidth: 1.5, borderColor: COLORS.success },
   confirmBtnText: { color: COLORS.success, fontSize: 17, fontWeight: '700' },
   rerollBtn: { alignItems: 'center', paddingVertical: SPACING.sm },
-  rerollText: { color: COLORS.textDim, fontSize: 13 },
+  rerollText: { color: COLORS.textMuted, fontSize: 13 },
 
   // Peek bar
   peekBar: { position: 'absolute', bottom: 0, left: 0, right: 0 },

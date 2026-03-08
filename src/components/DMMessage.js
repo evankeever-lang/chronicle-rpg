@@ -27,12 +27,17 @@ export default function DMMessage({ message }) {
       return <NarrationBlock text={c} />;
     }
     if (!c) return null;
+    // npc_dialogue can be a single { name, text } object or an array of them
+    const npcLines = Array.isArray(c.npc_dialogue)
+      ? c.npc_dialogue.filter(n => n?.text)
+      : (c.npc_dialogue?.text ? [c.npc_dialogue] : []);
+
     return (
       <View>
         {!!c.narration && <NarrationBlock text={c.narration} />}
-        {!!c.npc_dialogue?.text && (
-          <NpcBlock name={c.npc_dialogue.name} text={c.npc_dialogue.text} />
-        )}
+        {npcLines.map((npc, i) => (
+          <NpcBlock key={i} name={npc.name} text={npc.text} />
+        ))}
         {!!c.system_text && <SystemBlock content={c.system_text} />}
       </View>
     );
