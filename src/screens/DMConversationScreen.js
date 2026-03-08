@@ -16,9 +16,9 @@ import ChronicleCard from '../components/ChronicleCard';
 import CombatHUD from '../components/CombatHUD';
 import {
   rollInitiative, initializeEnemies, resolveAttack, rollDamage,
-  rollDeathSave, buildCombatSummary, formatEnemyTurn, getPlayerCombatProfile,
+  rollDeathSave, buildCombatSummary, formatPlayerAttack, formatEnemyTurn, getPlayerCombatProfile,
 } from '../utils/combat';
-import { getAbilityModifier } from '../utils/dice';
+import { getAbilityModifier, roll } from '../utils/dice';
 import { COLORS, FONTS, FONT_SIZES, SPACING, RADIUS } from '../constants/theme';
 
 const PERSONA_TYPING = {
@@ -156,44 +156,140 @@ export default function DMConversationScreen({ navigation }) {
   // ── Combat handlers ──────────────────────────────────────────────────────────
 
   const handleCombatStart = (dmResponse) => {
-    const rawEnemies = dmResponse.state_updates?.enemies || [];
-    const enemies = initializeEnemies(rawEnemies);
-    initCombat(enemies);
+    const rawEnemies = dmResponse.enemies || dmResponse.state_updates?.enemies || [];
+    const enemyList = rawEnemies.length > 0 ? rawEnemies : [{ name: 'Enemy', hp: 10, maxHp: 10, ac: 12, attackBonus: 3, damageDice: '1d6', initiativeMod: 0 }];
+    const enemies = initializeEnemies(enemyList);
+    initCombat(enemies); // → COMBAT_INIT state
 
-    // Build entity list for initiative (player + all enemies)
+    // Show dice roller for player's initiative roll — enemies auto-roll after
+    setPendingCombatRoll({ type: 'initiative', enemies });
+    setDiceVisible(true);
+    Haptics.notificationAsync(Haptics.NotificationFeedbackType.Warning);
+  };
+
+  const handleInitiativeRoll = (rollResult, enemies) => {
     const playerDexMod = getAbilityModifier(character?.abilityScores?.DEX || 10);
-    const entities = [
-      { name: character?.name || 'You', isPlayer: true, dexMod: playerDexMod },
+    const allCombatants = [
+      {
+        id: 'player',
+        name: character?.name || 'You',
+        isPlayer: true,
+        initiative: rollResult.die + playerDexMod,
+        hp: character?.currentHP ?? 0,
+        maxHp: character?.maxHP ?? 0,
+        ac: character?.AC ?? 10,
+        conditions: character?.conditions || [],
+        _tie: Math.random(),
+      },
       ...enemies.map(e => ({
-        ...e, isPlayer: false, dexMod: 0, initiativeBonus: e.initiativeMod,
+        ...e,
+        isPlayer: false,
+        initiative: roll(20) + (e.initiativeMod || 0),
+        _tie: Math.random(),
       })),
-    ];
-    const rolled = rollInitiative(entities);
+    ]
+      .sort((a, b) => b.initiative !== a.initiative ? b.initiative - a.initiative : b._tie - a._tie)
+      .map(({ _tie, ...rest }) => rest);
 
-    // Enrich with hp/maxHp/ac/conditions for the HUD
-    const turnOrder = rolled.map(e => ({
-      ...e,
-      hp: e.isPlayer ? (character?.currentHP ?? 0) : e.hp,
-      maxHp: e.isPlayer ? (character?.maxHP ?? 0) : e.maxHp,
-      ac: e.isPlayer ? (character?.AC ?? 10) : e.ac,
-      conditions: e.isPlayer ? (character?.conditions || []) : (e.conditions || []),
-    }));
-    resolveInitiative(turnOrder);
+    resolveInitiative(allCombatants); // → COMBAT_STATE
 
-    // Add a system message showing the initiative order
-    const orderStr = turnOrder
-      .map(t => `${t.isPlayer ? 'You' : t.name} (${t.initiative})`)
-      .join(' → ');
+    const orderStr = allCombatants.map(t => `${t.isPlayer ? 'You' : t.name} (${t.initiative})`).join(' → ');
     addMessage({
       id: `combat_init_${Date.now()}`,
       role: 'assistant',
-      content: { system_text: `Combat begins — Initiative: ${orderStr}` },
+      content: { system_text: `Initiative — ${orderStr}` },
+      personaName: selectedPersona?.name,
+      personaEmoji: selectedPersona?.emoji,
+      timestamp: Date.now(),
+    });
+  };
+
+  const handleAttackRoll = async (rollResult, targetEnemy) => {
+    const profile = getPlayerCombatProfile(character);
+    const dieRoll = rollResult.die;
+    const isCrit = dieRoll === 20;
+    const isFumble = dieRoll === 1;
+    const total = dieRoll + profile.attackBonus;
+    const hit = isCrit || (!isFumble && total >= targetEnemy.ac);
+
+    let damage = 0;
+    let newEnemyHp = targetEnemy.hp;
+    let updatedEnemies = [...activeEnemies];
+
+    if (hit) {
+      const dmgResult = rollDamage(profile.damageDice, isCrit);
+      damage = Math.max(1, dmgResult.total + profile.damageMod);
+      newEnemyHp = Math.max(0, targetEnemy.hp - damage);
+      applyEnemyDamage(targetEnemy.id, damage);
+      updatedEnemies = activeEnemies.map(e =>
+        e.id === targetEnemy.id ? { ...e, hp: newEnemyHp } : e
+      );
+      if (isCrit) Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
+    }
+
+    const logText = isCrit
+      ? `CRITICAL HIT on ${targetEnemy.name}! Dealt ${damage} damage. [${targetEnemy.name}: ${newEnemyHp}/${targetEnemy.maxHp} HP]`
+      : isFumble
+      ? `Fumble — miss on ${targetEnemy.name}. (Roll: 1)`
+      : hit
+      ? `You strike ${targetEnemy.name} for ${damage} damage. (Roll: ${dieRoll}+${profile.attackBonus}=${total} vs AC ${targetEnemy.ac}) [${targetEnemy.name}: ${newEnemyHp}/${targetEnemy.maxHp} HP]`
+      : `Missed ${targetEnemy.name}. (Roll: ${dieRoll}+${profile.attackBonus}=${total} vs AC ${targetEnemy.ac})`;
+
+    addMessage({
+      id: `player_attack_${Date.now()}`,
+      role: 'assistant',
+      content: { system_text: logText },
       personaName: selectedPersona?.name,
       personaEmoji: selectedPersona?.emoji,
       timestamp: Date.now(),
     });
 
-    Haptics.notificationAsync(Haptics.NotificationFeedbackType.Warning);
+    setCombatPanelMode(null);
+    advanceTurn();
+    if (updatedEnemies.every(e => e.hp <= 0)) {
+      await checkCombatEnd(updatedEnemies);
+    }
+  };
+
+  const resolveEnemyTurn = () => {
+    const activeCombatant = combatTurnOrder[activeTurnIndex];
+    if (!activeCombatant || activeCombatant.isPlayer) return;
+
+    const enemy = activeEnemies.find(e => e.id === activeCombatant.id || e.name === activeCombatant.name);
+    if (!enemy || enemy.hp <= 0) {
+      advanceTurn();
+      return;
+    }
+
+    const attackResult = resolveAttack(enemy.attackBonus, character?.AC || 10);
+    let damage = 0;
+    let playerHpAfter = character?.currentHP || 0;
+
+    if (attackResult.hit) {
+      const dmgResult = rollDamage(enemy.damageDice, attackResult.isCrit);
+      damage = dmgResult.total;
+      playerHpAfter = Math.max(0, (character?.currentHP || 0) - damage);
+      applyPlayerCombatDamage(damage);
+      if (playerHpAfter === 0) Haptics.notificationAsync(Haptics.NotificationFeedbackType.Error);
+    }
+
+    const logText = attackResult.isCrit
+      ? `${enemy.name} lands a CRITICAL HIT for ${damage} damage! [Your HP: ${playerHpAfter}/${character?.maxHP}]`
+      : attackResult.hit
+      ? `${enemy.name} strikes you for ${damage} damage. (Roll: ${attackResult.roll}+${enemy.attackBonus}=${attackResult.total} vs AC ${character?.AC}) [Your HP: ${playerHpAfter}/${character?.maxHP}]`
+      : `${enemy.name} swings at you but misses. (Roll: ${attackResult.roll}+${enemy.attackBonus}=${attackResult.total} vs AC ${character?.AC})`;
+
+    addMessage({
+      id: `enemy_turn_${Date.now()}`,
+      role: 'assistant',
+      content: { system_text: logText },
+      personaName: selectedPersona?.name,
+      personaEmoji: selectedPersona?.emoji,
+      timestamp: Date.now(),
+    });
+
+    Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium);
+    advanceTurn();
   };
 
   const handleEnemyAction = (enemyAction) => {
@@ -238,18 +334,60 @@ export default function DMConversationScreen({ navigation }) {
     });
   };
 
-  // Check if all enemies are defeated and auto-send combat summary to DM.
-  // Call with the locally-updated enemy list before dispatching to context.
-  const checkCombatEnd = async (updatedEnemies) => {
-    if (updatedEnemies.every(e => e.hp <= 0)) {
-      const summary = buildCombatSummary({
-        enemies: updatedEnemies,
-        rounds: combatRound,
-        playerHpStart: playerHpAtCombatStart,
-        playerHpEnd: character?.currentHP ?? 0,
+  // Reset combat panel when leaving COMBAT_STATE
+  useEffect(() => {
+    if (combatState !== 'COMBAT_STATE') {
+      setCombatPanelMode(null);
+      setCustomCombatText('');
+    }
+  }, [combatState]);
+
+  const hasSpells = Object.values(character?.spellSlots || {}).some(slots => slots > 0);
+
+  const handleCombatAttack = (targetEnemy) => {
+    setCombatPanelMode(null);
+    setPendingCombatRoll({ type: 'attack', targetEnemy });
+    setDiceVisible(true);
+  };
+
+  // Called with locally-updated enemy list. Makes exactly 1 API call for the outro.
+  const checkCombatEnd = async (updatedEnemies, force = false) => {
+    if (!force && !updatedEnemies.every(e => e.hp <= 0)) return;
+
+    endCombat(); // → COMBAT_RESOLUTION (hides action panel)
+
+    const summary = buildCombatSummary({
+      enemies: updatedEnemies,
+      rounds: combatRound,
+      playerHpStart: playerHpAtCombatStart,
+      playerHpEnd: character?.currentHP ?? 0,
+    });
+
+    setLoading(true);
+    try {
+      const apiMessages = getDMApiMessages();
+      apiMessages.push({ role: 'user', content: `[Combat resolved] ${summary} Narrate the outcome and aftermath briefly.` });
+      const dmResponse = await callDM({
+        messages: apiMessages,
+        character, campaign: selectedCampaign, persona: selectedPersona,
+        messageCount: playerTurnCount.current, sessionFlags,
       });
-      // Send summary to DM; DM will respond with combat_end: true + outro
-      await sendMessage(`[Combat over] ${summary} Please narrate the aftermath.`, true);
+      addMessage({
+        id: `dm_${Date.now()}`, role: 'assistant', content: dmResponse,
+        personaName: selectedPersona?.name || 'The Chronicler',
+        personaEmoji: selectedPersona?.emoji || '📜', timestamp: Date.now(),
+      });
+      if (dmResponse.tone) setTone(dmResponse.tone);
+      if (dmResponse.scene_tag) setSceneTag(dmResponse.scene_tag);
+    } catch (_) {
+      addMessage({
+        id: `err_${Date.now()}`, role: 'assistant',
+        content: { narration: 'The dust settles after the battle.' },
+        personaName: selectedPersona?.name, personaEmoji: selectedPersona?.emoji, timestamp: Date.now(),
+      });
+    } finally {
+      setLoading(false);
+      resetCombat(); // → EXPLORATION
     }
   };
 
@@ -260,6 +398,9 @@ export default function DMConversationScreen({ navigation }) {
   const [chronicleVisible, setChronicleVisible] = useState(false);
   const [isGeneratingSummary, setIsGeneratingSummary] = useState(false);
   const [lootCard, setLootCard] = useState(null);
+  const [combatPanelMode, setCombatPanelMode] = useState(null); // null | 'attack'
+  const [customCombatText, setCustomCombatText] = useState('');
+  const [pendingCombatRoll, setPendingCombatRoll] = useState(null); // null | { type: 'initiative', enemies } | { type: 'attack', targetEnemy }
 
   // ── Player-turn message counter (only counts what player sends) ─────────────
   const playerTurnCount = useRef(0);
@@ -360,6 +501,8 @@ export default function DMConversationScreen({ navigation }) {
         setPendingRoll(dmResponse.requires_roll);
         setDiceVisible(true);
       }
+      if (dmResponse.combat_start) handleCombatStart(dmResponse);
+      if (dmResponse.combat_end) checkCombatEnd(activeEnemies, true);
     } catch (err) {
       addMessage({ id: `err_${Date.now()}`, role: 'assistant', content: { narration: 'The chronicler pauses... (Connection issue — try again.)' }, personaName: selectedPersona?.name, personaEmoji: selectedPersona?.emoji, timestamp: Date.now() });
     } finally {
@@ -425,7 +568,7 @@ export default function DMConversationScreen({ navigation }) {
         handleCombatStart(dmResponse);
       }
       if (dmResponse.combat_end) {
-        resetCombat();
+        checkCombatEnd(activeEnemies, true);
       }
       if (dmResponse.enemy_action && combatState === 'COMBAT_STATE') {
         handleEnemyAction(dmResponse.enemy_action);
@@ -457,20 +600,37 @@ export default function DMConversationScreen({ navigation }) {
   const handleRollComplete = useCallback((rollResult) => {
     setDiceVisible(false);
     setIsPeeking(false);
+    Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Heavy);
+
+    // Route combat rolls — no API call, handled client-side
+    if (pendingCombatRoll?.type === 'initiative') {
+      handleInitiativeRoll(rollResult, pendingCombatRoll.enemies);
+      setPendingCombatRoll(null);
+      return;
+    }
+    if (pendingCombatRoll?.type === 'attack') {
+      handleAttackRoll(rollResult, pendingCombatRoll.targetEnemy);
+      setPendingCombatRoll(null);
+      return;
+    }
+
+    // Regular skill check → send to DM
     const mod = rollResult.modifier || 0;
     const rollText = pendingRoll
       ? `I rolled a ${rollResult.die} for my ${pendingRoll.skill} check. With my modifier of ${mod >= 0 ? '+' + mod : mod}, my total is ${rollResult.total}.${rollResult.isCrit ? ' Natural 20!' : rollResult.isFumble ? ' Natural 1.' : ''} ${rollResult.success !== null ? (rollResult.success ? 'I succeeded.' : 'I failed.') : ''}`
       : `I rolled a ${rollResult.die} on the d${rollResult.sides}.`;
     setPendingRoll(null);
-    Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Heavy);
     sendMessage(rollText);
-  }, [pendingRoll, sendMessage]);
+  }, [pendingRoll, pendingCombatRoll, sendMessage, handleInitiativeRoll, handleAttackRoll]);
 
   const handleQuickAction = (action) => sendMessage(action);
 
   const lastDMMessage = [...(messages || [])].reverse().find(m => m.role === 'assistant');
   const lastPlayerMessage = [...(messages || [])].reverse().find(m => m.role === 'user' && m.displayText)?.displayText || null;
   const suggestedActions = lastDMMessage?.content?.suggested_actions || [];
+
+  const activeCombatant = combatTurnOrder[activeTurnIndex];
+  const isPlayerTurn = activeCombatant?.isPlayer === true;
 
   const hpColor = getHpColor(character?.currentHP ?? 1, character?.maxHP ?? 1);
   const hpPct = character?.maxHP > 0 ? (character.currentHP ?? 0) / character.maxHP : 1;
@@ -632,8 +792,123 @@ export default function DMConversationScreen({ navigation }) {
           </View>
         )}
 
+        {/* ── Combat Action Panel (replaces freeform input during COMBAT_STATE) ── */}
+        {combatState === 'COMBAT_STATE' && !diceVisible && !isAtLimit && (
+          <View style={styles.combatPanel}>
+            {!isPlayerTurn ? (
+              // Enemy turn: tap to auto-resolve (no API call)
+              <TouchableOpacity
+                style={styles.enemyTurnBtn}
+                onPress={resolveEnemyTurn}
+                disabled={isLoading}
+              >
+                <Text style={styles.enemyTurnBtnText}>
+                  Resolve {activeCombatant?.name}'s turn →
+                </Text>
+              </TouchableOpacity>
+            ) : combatPanelMode === 'attack' ? (
+              <View>
+                <View style={styles.combatPanelHeader}>
+                  <Text style={styles.combatPanelLabel}>Choose target</Text>
+                  <TouchableOpacity onPress={() => setCombatPanelMode(null)}>
+                    <Text style={styles.combatCancelText}>← Back</Text>
+                  </TouchableOpacity>
+                </View>
+                <View style={styles.combatTargetRow}>
+                  {activeEnemies.filter(e => e.hp > 0).map(enemy => {
+                    const profile = getPlayerCombatProfile(character);
+                    return (
+                      <TouchableOpacity
+                        key={enemy.id}
+                        style={styles.combatTargetBtn}
+                        onPress={() => handleCombatAttack(enemy)}
+                        disabled={isLoading}
+                      >
+                        <Text style={styles.combatTargetName}>{enemy.name}</Text>
+                        <Text style={styles.combatTargetSub}>AC {enemy.ac} · {enemy.hp}/{enemy.maxHp} HP</Text>
+                        <Text style={styles.combatTargetDice}>{profile.damageDice} {formatMod(profile.damageMod)}</Text>
+                      </TouchableOpacity>
+                    );
+                  })}
+                </View>
+              </View>
+            ) : (
+              <>
+                <View style={styles.combatPanelRow}>
+                  <TouchableOpacity style={styles.combatActionBtn} onPress={() => setCombatPanelMode('attack')} disabled={isLoading}>
+                    <Text style={styles.combatActionIcon}>⚔️</Text>
+                    <Text style={styles.combatActionLabel}>Attack</Text>
+                  </TouchableOpacity>
+                  <TouchableOpacity style={styles.combatActionBtn} onPress={() => {
+                    addMessage({ id: `combat_${Date.now()}`, role: 'assistant', content: { system_text: `${character?.name || 'You'} dashes — movement doubled this turn.` }, personaName: selectedPersona?.name, personaEmoji: selectedPersona?.emoji, timestamp: Date.now() });
+                    advanceTurn();
+                  }} disabled={isLoading}>
+                    <Text style={styles.combatActionIcon}>🏃</Text>
+                    <Text style={styles.combatActionLabel}>Dash</Text>
+                  </TouchableOpacity>
+                  <TouchableOpacity style={styles.combatActionBtn} onPress={() => {
+                    addMessage({ id: `combat_${Date.now()}`, role: 'assistant', content: { system_text: `${character?.name || 'You'} takes the Dodge action — attackers have disadvantage until next turn.` }, personaName: selectedPersona?.name, personaEmoji: selectedPersona?.emoji, timestamp: Date.now() });
+                    advanceTurn();
+                  }} disabled={isLoading}>
+                    <Text style={styles.combatActionIcon}>🛡️</Text>
+                    <Text style={styles.combatActionLabel}>Dodge</Text>
+                  </TouchableOpacity>
+                  <TouchableOpacity style={styles.combatActionBtn} onPress={() => {
+                    addMessage({ id: `combat_${Date.now()}`, role: 'assistant', content: { system_text: `${character?.name || 'You'} uses Help — an ally gains advantage on their next roll.` }, personaName: selectedPersona?.name, personaEmoji: selectedPersona?.emoji, timestamp: Date.now() });
+                    advanceTurn();
+                  }} disabled={isLoading}>
+                    <Text style={styles.combatActionIcon}>🙋</Text>
+                    <Text style={styles.combatActionLabel}>Help</Text>
+                  </TouchableOpacity>
+                </View>
+                <View style={styles.combatPanelRow}>
+                  <TouchableOpacity style={styles.combatActionBtnSecondary} onPress={() => {
+                    addMessage({ id: `combat_${Date.now()}`, role: 'assistant', content: { system_text: `${character?.name || 'You'} uses an item.` }, personaName: selectedPersona?.name, personaEmoji: selectedPersona?.emoji, timestamp: Date.now() });
+                    advanceTurn();
+                  }} disabled={isLoading}>
+                    <Text style={styles.combatActionIcon}>🧪</Text>
+                    <Text style={[styles.combatActionLabel, styles.combatActionLabelSecondary]}>Use Item</Text>
+                  </TouchableOpacity>
+                  <TouchableOpacity
+                    style={[styles.combatActionBtnSecondary, !hasSpells && styles.combatActionBtnDisabled]}
+                    onPress={() => {
+                      addMessage({ id: `combat_${Date.now()}`, role: 'assistant', content: { system_text: `${character?.name || 'You'} casts a spell.` }, personaName: selectedPersona?.name, personaEmoji: selectedPersona?.emoji, timestamp: Date.now() });
+                      advanceTurn();
+                    }}
+                    disabled={isLoading || !hasSpells}
+                  >
+                    <Text style={styles.combatActionIcon}>📜</Text>
+                    <Text style={[styles.combatActionLabel, styles.combatActionLabelSecondary, !hasSpells && styles.combatActionLabelDisabled]}>Spells</Text>
+                  </TouchableOpacity>
+                  <TouchableOpacity style={styles.combatActionBtnSecondary} onPress={() => {
+                    addMessage({ id: `combat_${Date.now()}`, role: 'assistant', content: { system_text: `${character?.name || 'You'} taunts the enemy with a battle cry.` }, personaName: selectedPersona?.name, personaEmoji: selectedPersona?.emoji, timestamp: Date.now() });
+                    advanceTurn();
+                  }} disabled={isLoading}>
+                    <Text style={styles.combatActionIcon}>💬</Text>
+                    <Text style={[styles.combatActionLabel, styles.combatActionLabelSecondary]}>Taunt</Text>
+                  </TouchableOpacity>
+                  <TouchableOpacity
+                    style={styles.combatActionBtnSecondary}
+                    onPress={() => Alert.alert('Flee?', 'Attempt to disengage and flee combat?', [
+                      { text: 'Stay', style: 'cancel' },
+                      { text: 'Flee', onPress: () => {
+                        addMessage({ id: `combat_${Date.now()}`, role: 'assistant', content: { system_text: `${character?.name || 'You'} disengages and flees from combat.` }, personaName: selectedPersona?.name, personaEmoji: selectedPersona?.emoji, timestamp: Date.now() });
+                        checkCombatEnd(activeEnemies, true);
+                      }},
+                    ])}
+                    disabled={isLoading}
+                  >
+                    <Text style={styles.combatActionIcon}>🚪</Text>
+                    <Text style={[styles.combatActionLabel, styles.combatActionLabelSecondary]}>Flee</Text>
+                  </TouchableOpacity>
+                </View>
+              </>
+            )}
+          </View>
+        )}
+
         {/* ── Input bar ── */}
-        {!diceVisible && !isAtLimit && combatState !== 'DOWNED' && (
+        {!diceVisible && !isAtLimit && combatState !== 'DOWNED' && combatState !== 'COMBAT_STATE' && (
           <View style={styles.inputBar}>
             <TextInput
               style={styles.input}
@@ -912,6 +1187,133 @@ const styles = StyleSheet.create({
   skillTagText: { fontSize: FONT_SIZES.xs, color: COLORS.primary, fontWeight: '600' },
   sheetListItem: { fontSize: FONT_SIZES.sm, color: COLORS.textSecondary, marginBottom: 4 },
   sheetGold: { fontSize: FONT_SIZES.sm, color: COLORS.primary, fontStyle: 'italic', marginTop: SPACING.xs, marginBottom: SPACING.sm },
+
+  // ── Combat Action Panel ─────────────────────────────────────────────────────
+  combatPanel: {
+    borderTopWidth: 1,
+    borderTopColor: COLORS.accentDanger + '44',
+    backgroundColor: COLORS.surface,
+    paddingTop: SPACING.sm,
+    paddingBottom: SPACING.sm,
+    paddingHorizontal: SPACING.sm,
+  },
+  enemyTurnBtn: {
+    backgroundColor: COLORS.surfaceElevated,
+    borderRadius: RADIUS.md,
+    borderWidth: 1,
+    borderColor: COLORS.accentDanger + '66',
+    paddingVertical: SPACING.md,
+    alignItems: 'center',
+  },
+  enemyTurnBtnText: {
+    color: COLORS.accentDanger,
+    fontSize: FONT_SIZES.sm,
+    fontWeight: '700',
+    letterSpacing: 0.3,
+  },
+  combatPanelHeader: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    marginBottom: SPACING.xs,
+    paddingHorizontal: SPACING.xs,
+  },
+  combatPanelLabel: {
+    color: COLORS.textMuted,
+    fontSize: FONT_SIZES.xs,
+    textTransform: 'uppercase',
+    letterSpacing: 1,
+    fontWeight: '700',
+  },
+  combatCancelText: {
+    color: COLORS.primary,
+    fontSize: FONT_SIZES.sm,
+    fontWeight: '600',
+  },
+  combatPanelRow: {
+    flexDirection: 'row',
+    gap: SPACING.xs,
+    marginBottom: SPACING.xs,
+  },
+  combatActionBtn: {
+    flex: 1,
+    backgroundColor: COLORS.surfaceElevated,
+    borderRadius: RADIUS.md,
+    borderWidth: 1,
+    borderColor: COLORS.border,
+    paddingVertical: SPACING.sm,
+    alignItems: 'center',
+    gap: 3,
+  },
+  combatActionBtnSecondary: {
+    flex: 1,
+    backgroundColor: COLORS.surface,
+    borderRadius: RADIUS.md,
+    borderWidth: 1,
+    borderColor: COLORS.border,
+    paddingVertical: SPACING.xs,
+    alignItems: 'center',
+    gap: 2,
+  },
+  combatActionBtnDisabled: {
+    opacity: 0.35,
+  },
+  combatActionIcon: {
+    fontSize: 20,
+  },
+  combatActionLabel: {
+    color: COLORS.textSecondary,
+    fontSize: 10,
+    fontWeight: '600',
+    textTransform: 'uppercase',
+    letterSpacing: 0.3,
+  },
+  combatActionLabelSecondary: {
+    fontSize: 9,
+    color: COLORS.textMuted,
+  },
+  combatActionLabelDisabled: {
+    opacity: 0.5,
+  },
+  combatTargetRow: {
+    flexDirection: 'row',
+    gap: SPACING.xs,
+    flexWrap: 'wrap',
+  },
+  combatTargetBtn: {
+    flex: 1,
+    minWidth: 80,
+    backgroundColor: COLORS.surfaceElevated,
+    borderRadius: RADIUS.md,
+    borderWidth: 1,
+    borderColor: COLORS.accentDanger + '66',
+    padding: SPACING.sm,
+    alignItems: 'center',
+    gap: 2,
+  },
+  combatTargetName: {
+    color: COLORS.textPrimary,
+    fontSize: FONT_SIZES.sm,
+    fontWeight: '700',
+  },
+  combatTargetSub: {
+    color: COLORS.textMuted,
+    fontSize: 10,
+  },
+  combatTargetDice: {
+    color: COLORS.primary,
+    fontSize: 10,
+    fontWeight: '700',
+  },
+  combatCustomBtn: {
+    alignItems: 'center',
+    paddingVertical: SPACING.xs,
+  },
+  combatCustomText: {
+    color: COLORS.textMuted,
+    fontSize: 12,
+    textDecorationLine: 'underline',
+  },
 
   // ── Loot ────────────────────────────────────────────────────────────────────
   lootOverlay: { flex: 1, backgroundColor: COLORS.overlay, justifyContent: 'center', alignItems: 'center', padding: SPACING.xl },

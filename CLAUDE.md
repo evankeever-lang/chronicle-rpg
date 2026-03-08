@@ -99,7 +99,7 @@ State machine lives in GameContext with its own reducer actions:
 |---|---|---|
 | `EXPLORATION` | Default | AI handles narrative, NPCs, exploration. No combat tracking. |
 | `COMBAT_INIT` | `combat_start: true` in DM JSON | Client rolls initiative for all parties. Turn order calculated and shown in HUD. |
-| `COMBAT_STATE` | Initiative resolved | Turn order tracked in GameContext. All attack/damage/save rolls client-side. AI narrates after each round batch. |
+| `COMBAT_STATE` | Initiative resolved | Turn order tracked in GameContext. All attack/damage/save rolls client-side. AI narrates once per round after all turns resolve. |
 | `COMBAT_RESOLUTION` | `combat_end: true` | AI generates outro with full battle summary injected as context. |
 | `DOWNED` | Player HP = 0 | Death save tracker activates. d20 client-side each turn. 3 successes = stabilise, 3 failures = death. Natural 20 = 1 HP. |
 
@@ -109,7 +109,88 @@ State machine lives in GameContext with its own reducer actions:
 - Damage rolls → client computes, sends new HP value to AI
 - Death saves → client tracks successes/failures, AI notified of outcome only
 - HP modification → GameContext only, never AI
-- Combat narrative / flavour → AI only
+- NPC turn log lines → programmatic template strings (see below), never AI
+- Combat narrative / flavour → AI only, once per round
+
+### Combat UX & Flow — Implementation Spec
+
+**Initiative Ceremony (COMBAT_INIT)**
+Do NOT show initiative as a chat message. The sequence is:
+1. `combat_start: true` detected → HUD appears immediately (before any AI narrative)
+2. Each combatant's d20 animates and lands sequentially (client-side, no API call)
+3. Turn order locks into the HUD initiative chips with final scores visible
+4. THEN the AI's combat-opening narration renders below the HUD
+This is zero API cost and the highest-value trust/ceremony moment in the game.
+
+**CombatHUD Persistence**
+- HUD mounts at `COMBAT_INIT` and must NOT unmount until `COMBAT_RESOLUTION`
+- The HUD is a persistent overlay/sticky header — it does not re-render or disappear between turns or when the message list updates
+- Round counter, active turn indicator (glowing chip), and all HP bars must remain visible at all times during `COMBAT_STATE`
+
+**Turn-Stepping Model**
+Combat steps through turns one at a time. The player taps to advance NPC turns. No API calls occur mid-round.
+
+```
+Round N begins
+  → NPC turn: programmatic log line renders, "Tap to continue" prompt
+  → Player turn: Combat Action Panel appears (replaces text input entirely)
+  → [repeat for all combatants]
+Round N ends
+  → All turns resolved → 1 AI call for round narration
+  → Round counter increments, next round begins
+Combat ends (all enemies at 0 HP or player flees)
+  → 1 AI call for combat outro with full battle summary injected
+```
+
+**Combat Action Panel (replaces freeform text input during COMBAT_STATE)**
+The `"Describe your attack or action..."` text input must be hidden during `COMBAT_STATE`. Replace with a structured action panel:
+
+Primary actions row (always visible):
+- ⚔️ **Attack** → expands to weapon list with dice notation (e.g. "Short Sword d6+DEX")
+- 🏃 **Dash** → doubles movement, no attack
+- 🛡️ **Dodge** → attackers have disadvantage until next turn
+- 🙋 **Help** → give ally advantage on next roll
+
+Secondary row:
+- 🧪 **Use Item** → opens inventory (potions, consumables)
+- 📜 **Spells** → opens spell list if class has spells (grayed out if none / slots spent)
+- 💬 **Taunt / RP** → one free RP line, does not consume action
+- 🚪 **Disengage / Flee** → triggers flee prompt, may end combat
+
+If the player needs to do something not on the panel, a "Custom Action" button triggers a single targeted AI call — this is the fallback, not the default.
+
+**Programmatic NPC Turn Log Templates**
+These render instantly with no API call. Use for all NPC/ally turns:
+
+```js
+// Hit
+`${attacker} strikes ${target} for ${damage} damage. [${target} HP: ${newHP}/${maxHP}]`
+
+// Miss
+`${attacker} swings at ${target} but misses. (Roll: ${roll} vs AC ${targetAC})`
+
+// Critical hit
+`${attacker} lands a CRITICAL HIT on ${target} for ${damage} damage!`
+
+// Downed
+`${target} falls, dropping to 0 HP.`
+
+// Death save (player)
+`Death save — roll ${roll}. ${result}. (${successes} successes / ${failures} failures)`
+```
+
+**Combat API Call Budget**
+| Moment | Source | API Call? |
+|---|---|---|
+| Initiative rolls | Client dice | ❌ No |
+| NPC attack + damage | Client dice + templates | ❌ No |
+| Player action resolution | Client dice + math | ❌ No |
+| HP modification | GameContext only | ❌ No |
+| End-of-round narration | AI (1 per round) | ✅ Yes |
+| Combat outro / resolution | AI (1 per encounter) | ✅ Yes |
+| Custom player action (fallback) | AI (targeted) | ✅ Yes (rare) |
+
+Target: a 3-round combat encounter costs 3–4 AI calls total, not 3–4 per round.
 
 ### Pacing & Message Heartbeat Model
 **Rule: One API call per narrative beat. Not per player interaction.**

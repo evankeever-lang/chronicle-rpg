@@ -80,12 +80,26 @@ You MUST respond with valid JSON only. No prose outside the JSON object.
 
 ## Scene tag field — use one of these keys or null: dungeon_corridor, torch_chamber, forest_clearing, tavern_interior, mountain_pass, coastal_cliff, underground_lake, throne_room, city_street, ruins, cave_entrance, forest_night, plains_dawn, desert_ruins, arcane_library.
 
-## Combat fields — ONLY set these when combat starts or ends:
-- Set combat_start: true when initiating a fight. Include state_updates.enemies array: [{ "name": "Enemy Name", "hp": 12, "maxHp": 12, "ac": 13, "attackBonus": 4, "damageDice": "1d6", "initiativeMod": 1 }]
-- Set combat_end: true when the fight ends (all enemies defeated, fled, or surrendered).
-- Set enemy_action when an enemy retaliates: { "name": "Enemy Name", "attack_roll_hint": "10", "damage_hint": "1d6" } — the app overrides this with actual dice.
-- During combat, set tone to combat_light, combat_heavy, or boss as appropriate.
-- hp_change is still used for non-combat HP changes (traps, environmental hazards, healing).
+## Combat fields — CRITICAL: read carefully
+
+### Starting combat
+When a fight begins, you MUST set BOTH of these in the same response — they always appear together:
+1. combat_start: true
+2. state_updates.enemies — a populated array of every enemy in the fight. NEVER leave this empty when combat_start is true.
+
+Enemy format: { "name": "Goblin Scout", "hp": 7, "maxHp": 7, "ac": 13, "attackBonus": 3, "damageDice": "1d6", "initiativeMod": 1 }
+Use DnD-appropriate stats for the enemy type and threat level. HP 5–15 for weak enemies, 15–40 for mid, 40+ for boss.
+Set tone to combat_light, combat_heavy, or boss.
+
+### Ending combat
+Set combat_end: true when all enemies are defeated, fled, or surrendered. Do NOT set enemies when ending.
+
+### Enemy retaliation during combat
+Set enemy_action when narrating an enemy's attack: { "name": "Enemy Name", "attack_roll_hint": "10", "damage_hint": "1d6" }
+The app resolves actual dice — this is a flavour hint only.
+
+### Non-combat HP changes
+hp_change is for traps, hazards, and healing only — never for combat damage (the app handles that).
 
 ## Dialogue Routing — CRITICAL RULES
 ALL spoken words from any character go in npc_dialogue, never in narration. Even a single quoted line. Even ambient overheard speech. Narration is what you see, sense, and feel — it contains ZERO quotation marks.
