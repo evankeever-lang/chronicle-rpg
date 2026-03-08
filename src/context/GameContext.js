@@ -31,6 +31,29 @@ const initialState = {
   isSessionActive: false,
   sessionSummary: null,
   epithet: null,
+
+  // ── Combat state ─────────────────────────────────────────────────────────────
+  // EXPLORATION | COMBAT_INIT | COMBAT_STATE | COMBAT_RESOLUTION | DOWNED
+  combatState: 'EXPLORATION',
+  combatTurnOrder: [],      // [{ name, isPlayer, initiative, id?, hp, maxHp, ac, conditions }]
+  activeTurnIndex: 0,
+  combatRound: 0,
+  activeEnemies: [],        // [{ id, name, hp, maxHp, ac, attackBonus, damageDice, conditions }]
+  playerHpAtCombatStart: 0,
+  deathSaves: { successes: 0, failures: 0 },
+
+  // ── Audio / art ───────────────────────────────────────────────────────────────
+  currentTone: 'exploration',
+  currentSceneTag: null,
+
+  // ── World registry & rolling summary ─────────────────────────────────────────
+  worldRegistry: {
+    used_npc_names: [],
+    used_location_names: [],
+    used_quest_names: [],
+    used_item_names: [],
+  },
+  rollingSummary: null,
 };
 
 function gameReducer(state, action) {
@@ -91,6 +114,123 @@ function gameReducer(state, action) {
           currentHP: Math.max(0, Math.min(action.payload, state.character.maxHP)),
         },
       };
+
+    // ── Combat ──────────────────────────────────────────────────────────────────
+    case 'START_COMBAT':
+      return {
+        ...state,
+        combatState: 'COMBAT_INIT',
+        activeEnemies: action.payload.enemies,
+        combatTurnOrder: [],
+        activeTurnIndex: 0,
+        combatRound: 0,
+        playerHpAtCombatStart: state.character.currentHP,
+        deathSaves: { successes: 0, failures: 0 },
+      };
+
+    case 'RESOLVE_INITIATIVE':
+      return {
+        ...state,
+        combatState: 'COMBAT_STATE',
+        combatTurnOrder: action.payload.turnOrder,
+        activeTurnIndex: 0,
+        combatRound: 1,
+      };
+
+    case 'ADVANCE_TURN': {
+      const nextIndex = (state.activeTurnIndex + 1) % Math.max(1, state.combatTurnOrder.length);
+      const newRound = nextIndex === 0 ? state.combatRound + 1 : state.combatRound;
+      return { ...state, activeTurnIndex: nextIndex, combatRound: newRound };
+    }
+
+    case 'APPLY_ENEMY_DAMAGE': {
+      const { enemyId, damage } = action.payload;
+      const updatedEnemies = state.activeEnemies.map(e =>
+        e.id === enemyId ? { ...e, hp: Math.max(0, e.hp - damage) } : e
+      );
+      const updatedOrder = state.combatTurnOrder.map(t => {
+        const match = updatedEnemies.find(e => e.id === t.id);
+        return match ? { ...t, hp: match.hp } : t;
+      });
+      return { ...state, activeEnemies: updatedEnemies, combatTurnOrder: updatedOrder };
+    }
+
+    case 'APPLY_PLAYER_COMBAT_DAMAGE': {
+      const newHP = Math.max(0, state.character.currentHP - action.payload.damage);
+      return {
+        ...state,
+        character: { ...state.character, currentHP: newHP },
+        combatState: newHP === 0 ? 'DOWNED' : state.combatState,
+        deathSaves: newHP === 0 ? { successes: 0, failures: 0 } : state.deathSaves,
+      };
+    }
+
+    case 'UPDATE_DEATH_SAVE': {
+      const { success, isCritical, isFumble } = action.payload;
+      // Natural 20 → regain 1 HP and stabilise
+      if (isCritical) {
+        return {
+          ...state,
+          character: { ...state.character, currentHP: 1 },
+          combatState: 'COMBAT_STATE',
+          deathSaves: { successes: 0, failures: 0 },
+        };
+      }
+      const failureAdd = isFumble ? 2 : success ? 0 : 1;
+      const successAdd = !isFumble && success ? 1 : 0;
+      const newSuccesses = state.deathSaves.successes + successAdd;
+      const newFailures = state.deathSaves.failures + failureAdd;
+      // 3 successes → stabilise at 0 HP
+      if (newSuccesses >= 3) {
+        return {
+          ...state,
+          combatState: 'COMBAT_STATE',
+          deathSaves: { successes: 3, failures: newFailures },
+        };
+      }
+      return { ...state, deathSaves: { successes: newSuccesses, failures: newFailures } };
+    }
+
+    case 'END_COMBAT':
+      return { ...state, combatState: 'COMBAT_RESOLUTION' };
+
+    case 'RESET_COMBAT':
+      return {
+        ...state,
+        combatState: 'EXPLORATION',
+        combatTurnOrder: [],
+        activeTurnIndex: 0,
+        combatRound: 0,
+        activeEnemies: [],
+        playerHpAtCombatStart: 0,
+        deathSaves: { successes: 0, failures: 0 },
+      };
+
+    // ── Audio / art ──────────────────────────────────────────────────────────────
+    case 'SET_TONE':
+      return { ...state, currentTone: action.payload };
+
+    case 'SET_SCENE_TAG':
+      return { ...state, currentSceneTag: action.payload };
+
+    // ── World registry & rolling summary ─────────────────────────────────────────
+    case 'UPDATE_WORLD_REGISTRY': {
+      const reg = state.worldRegistry;
+      const upd = action.payload;
+      return {
+        ...state,
+        worldRegistry: {
+          used_npc_names: [...new Set([...reg.used_npc_names, ...(upd.used_npc_names || [])])],
+          used_location_names: [...new Set([...reg.used_location_names, ...(upd.used_location_names || [])])],
+          used_quest_names: [...new Set([...reg.used_quest_names, ...(upd.used_quest_names || [])])],
+          used_item_names: [...new Set([...reg.used_item_names, ...(upd.used_item_names || [])])],
+        },
+      };
+    }
+
+    case 'SET_ROLLING_SUMMARY':
+      return { ...state, rollingSummary: action.payload };
+
     case 'ADD_TO_INVENTORY':
       return {
         ...state,
@@ -148,6 +288,31 @@ export function GameProvider({ children }) {
   /** Restore a save from disk into the running context (called from MainMenu). */
   const loadSavedGame = (saveData) => dispatch({ type: 'LOAD_GAME', payload: saveData });
 
+  // ── Combat action creators ───────────────────────────────────────────────────
+  const initCombat = (enemies) =>
+    dispatch({ type: 'START_COMBAT', payload: { enemies } });
+  const resolveInitiative = (turnOrder) =>
+    dispatch({ type: 'RESOLVE_INITIATIVE', payload: { turnOrder } });
+  const advanceTurn = () => dispatch({ type: 'ADVANCE_TURN' });
+  const applyEnemyDamage = (enemyId, damage) =>
+    dispatch({ type: 'APPLY_ENEMY_DAMAGE', payload: { enemyId, damage } });
+  const applyPlayerCombatDamage = (damage) =>
+    dispatch({ type: 'APPLY_PLAYER_COMBAT_DAMAGE', payload: { damage } });
+  const updateDeathSave = (result) =>
+    dispatch({ type: 'UPDATE_DEATH_SAVE', payload: result });
+  const endCombat = () => dispatch({ type: 'END_COMBAT' });
+  const resetCombat = () => dispatch({ type: 'RESET_COMBAT' });
+
+  // ── Audio / art ───────────────────────────────────────────────────────────────
+  const setTone = (tone) => dispatch({ type: 'SET_TONE', payload: tone });
+  const setSceneTag = (tag) => dispatch({ type: 'SET_SCENE_TAG', payload: tag });
+
+  // ── World registry & rolling summary ─────────────────────────────────────────
+  const updateWorldRegistry = (updates) =>
+    dispatch({ type: 'UPDATE_WORLD_REGISTRY', payload: updates });
+  const setRollingSummary = (summary) =>
+    dispatch({ type: 'SET_ROLLING_SUMMARY', payload: summary });
+
   return (
     <GameContext.Provider
       value={{
@@ -166,6 +331,21 @@ export function GameProvider({ children }) {
         endSession,
         resetGame,
         loadSavedGame,
+        // Combat
+        initCombat,
+        resolveInitiative,
+        advanceTurn,
+        applyEnemyDamage,
+        applyPlayerCombatDamage,
+        updateDeathSave,
+        endCombat,
+        resetCombat,
+        // Audio / art
+        setTone,
+        setSceneTag,
+        // World registry & summary
+        updateWorldRegistry,
+        setRollingSummary,
       }}
     >
       {children}

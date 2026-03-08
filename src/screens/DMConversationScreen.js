@@ -13,7 +13,13 @@ import { getTutorialBeatInjection } from '../constants/campaigns';
 import DMMessage from '../components/DMMessage';
 import DiceRoller from '../components/DiceRoller';
 import ChronicleCard from '../components/ChronicleCard';
-import { COLORS, SPACING, RADIUS } from '../constants/theme';
+import CombatHUD from '../components/CombatHUD';
+import {
+  rollInitiative, initializeEnemies, resolveAttack, rollDamage,
+  rollDeathSave, buildCombatSummary, formatEnemyTurn, getPlayerCombatProfile,
+} from '../utils/combat';
+import { getAbilityModifier } from '../utils/dice';
+import { COLORS, FONTS, FONT_SIZES, SPACING, RADIUS } from '../constants/theme';
 
 const PERSONA_TYPING = {
   chronicler: 'Inscribing the record…',
@@ -50,10 +56,30 @@ export default function DMConversationScreen({ navigation }) {
     setCharacter,
     setSessionSummary,
     resetGame: resetSession,
+    // Combat
+    combatState,
+    combatTurnOrder,
+    activeTurnIndex,
+    activeEnemies,
+    combatRound,
+    playerHpAtCombatStart,
+    deathSaves,
+    initCombat,
+    resolveInitiative,
+    advanceTurn,
+    applyEnemyDamage,
+    applyPlayerCombatDamage,
+    updateDeathSave,
+    endCombat,
+    resetCombat,
+    // Audio / art
+    setTone,
+    setSceneTag,
   } = game;
 
   const [isLoading, setLoading] = useState(false);
   const [historyVisible, setHistoryVisible] = useState(false);
+  const [charSheetVisible, setCharSheetVisible] = useState(false);
 
   // Apply structured state updates from DM JSON response
   const applyStateUpdates = (updates) => {
@@ -71,10 +97,112 @@ export default function DMConversationScreen({ navigation }) {
       setCharacter({ conditions: [...(character?.conditions || []), ...updates.add_conditions] });
     }
     if (updates.remove_conditions?.length) {
-      setCharacter({ conditions: (character?.conditions || []).filter(c => !updates.remove_conditions.includes(c)) });
+      setCharacter({
+        conditions: (character?.conditions || []).filter(c => !updates.remove_conditions.includes(c)),
+      });
     }
     if (updates.session_flags) setSessionFlags(updates.session_flags);
     if (updates.npc_memory?.length) updates.npc_memory.forEach(npc => upsertNPC(npc));
+  };
+
+  // ── Combat handlers ──────────────────────────────────────────────────────────
+
+  const handleCombatStart = (dmResponse) => {
+    const rawEnemies = dmResponse.state_updates?.enemies || [];
+    const enemies = initializeEnemies(rawEnemies);
+    initCombat(enemies);
+
+    // Build entity list for initiative (player + all enemies)
+    const playerDexMod = getAbilityModifier(character?.abilityScores?.DEX || 10);
+    const entities = [
+      { name: character?.name || 'You', isPlayer: true, dexMod: playerDexMod },
+      ...enemies.map(e => ({
+        ...e, isPlayer: false, dexMod: 0, initiativeBonus: e.initiativeMod,
+      })),
+    ];
+    const rolled = rollInitiative(entities);
+
+    // Enrich with hp/maxHp/ac/conditions for the HUD
+    const turnOrder = rolled.map(e => ({
+      ...e,
+      hp: e.isPlayer ? (character?.currentHP ?? 0) : e.hp,
+      maxHp: e.isPlayer ? (character?.maxHP ?? 0) : e.maxHp,
+      ac: e.isPlayer ? (character?.AC ?? 10) : e.ac,
+      conditions: e.isPlayer ? (character?.conditions || []) : (e.conditions || []),
+    }));
+    resolveInitiative(turnOrder);
+
+    // Add a system message showing the initiative order
+    const orderStr = turnOrder
+      .map(t => `${t.isPlayer ? 'You' : t.name} (${t.initiative})`)
+      .join(' → ');
+    addMessage({
+      id: `combat_init_${Date.now()}`,
+      role: 'assistant',
+      content: { system_text: `Combat begins — Initiative: ${orderStr}` },
+      personaName: selectedPersona?.name,
+      personaEmoji: selectedPersona?.emoji,
+      timestamp: Date.now(),
+    });
+
+    Haptics.notificationAsync(Haptics.NotificationFeedbackType.Warning);
+  };
+
+  const handleEnemyAction = (enemyAction) => {
+    if (!enemyAction?.name) return;
+
+    const enemy = activeEnemies.find(e => e.name === enemyAction.name) || {
+      name: enemyAction.name,
+      attackBonus: 3,
+      damageDice: '1d6',
+    };
+
+    const attackResult = resolveAttack(enemy.attackBonus, character?.AC || 10);
+    let damage = 0;
+    let playerHpAfter = character?.currentHP || 0;
+
+    if (attackResult.hit) {
+      const dmgResult = rollDamage(enemy.damageDice, attackResult.isCrit);
+      damage = dmgResult.total;
+      playerHpAfter = Math.max(0, (character?.currentHP || 0) - damage);
+      applyPlayerCombatDamage(damage);
+      if (playerHpAfter === 0) {
+        Haptics.notificationAsync(Haptics.NotificationFeedbackType.Error);
+      }
+    }
+
+    advanceTurn();
+
+    const resultText = formatEnemyTurn({
+      enemyName: enemy.name,
+      attackResult,
+      damage,
+      playerAC: character?.AC || 10,
+      playerHpAfter,
+    });
+    addMessage({
+      id: `enemy_turn_${Date.now()}`,
+      role: 'assistant',
+      content: { system_text: resultText },
+      personaName: selectedPersona?.name,
+      personaEmoji: selectedPersona?.emoji,
+      timestamp: Date.now(),
+    });
+  };
+
+  // Check if all enemies are defeated and auto-send combat summary to DM.
+  // Call with the locally-updated enemy list before dispatching to context.
+  const checkCombatEnd = async (updatedEnemies) => {
+    if (updatedEnemies.every(e => e.hp <= 0)) {
+      const summary = buildCombatSummary({
+        enemies: updatedEnemies,
+        rounds: combatRound,
+        playerHpStart: playerHpAtCombatStart,
+        playerHpEnd: character?.currentHP ?? 0,
+      });
+      // Send summary to DM; DM will respond with combat_end: true + outro
+      await sendMessage(`[Combat over] ${summary} Please narrate the aftermath.`, true);
+    }
   };
 
   const [inputText, setInputText] = useState('');
@@ -178,6 +306,8 @@ export default function DMConversationScreen({ navigation }) {
         personaEmoji: selectedPersona?.emoji || '📜', timestamp: Date.now(),
       });
       if (dmResponse.state_updates) applyStateUpdates(dmResponse.state_updates);
+      if (dmResponse.tone) setTone(dmResponse.tone);
+      if (dmResponse.scene_tag) setSceneTag(dmResponse.scene_tag);
       if (dmResponse.requires_roll) {
         setPendingRoll(dmResponse.requires_roll);
         setDiceVisible(true);
@@ -189,11 +319,12 @@ export default function DMConversationScreen({ navigation }) {
     }
   };
 
-  const sendMessage = useCallback(async (text) => {
-    if (!text.trim() || isLoading || isAtLimit) return;
+  // isCombatInternal: true when called programmatically (combat summary), doesn't count as player turn
+  const sendMessage = useCallback(async (text, isCombatInternal = false) => {
+    if (!text.trim() || isLoading || (isAtLimit && !isCombatInternal)) return;
 
-    playerTurnCount.current += 1;
-    const hitLimit = playerTurnCount.current >= FREE_PLAYER_TURNS;
+    if (!isCombatInternal) playerTurnCount.current += 1;
+    const hitLimit = !isCombatInternal && playerTurnCount.current >= FREE_PLAYER_TURNS;
 
     const userMsg = {
       id: `user_${Date.now()}`, role: 'user',
@@ -236,6 +367,21 @@ export default function DMConversationScreen({ navigation }) {
         }
       }
 
+      // ── Audio / art ──────────────────────────────────────────────────────────
+      if (dmResponse.tone) setTone(dmResponse.tone);
+      if (dmResponse.scene_tag) setSceneTag(dmResponse.scene_tag);
+
+      // ── Combat state transitions ──────────────────────────────────────────────
+      if (dmResponse.combat_start) {
+        handleCombatStart(dmResponse);
+      }
+      if (dmResponse.combat_end) {
+        resetCombat();
+      }
+      if (dmResponse.enemy_action && combatState === 'COMBAT_STATE') {
+        handleEnemyAction(dmResponse.enemy_action);
+      }
+
       if (dmResponse.requires_roll && !hitLimit) {
         setPendingRoll(dmResponse.requires_roll);
         setDiceVisible(true);
@@ -254,7 +400,10 @@ export default function DMConversationScreen({ navigation }) {
     } finally {
       setLoading(false);
     }
-  }, [isLoading, isAtLimit, messages, character, selectedCampaign, selectedPersona, sessionFlags, addMessage, setLoading, applyStateUpdates]);
+  }, [isLoading, isAtLimit, messages, character, selectedCampaign, selectedPersona, sessionFlags,
+      addMessage, setLoading, applyStateUpdates,
+      combatState, activeEnemies, combatRound, playerHpAtCombatStart,
+      handleCombatStart, handleEnemyAction, resetCombat, setTone, setSceneTag]);
 
   const handleRollComplete = useCallback((rollResult) => {
     setDiceVisible(false);
@@ -285,12 +434,12 @@ export default function DMConversationScreen({ navigation }) {
       {/* ── HUD ── */}
       <View style={styles.hud}>
         <View style={styles.hudLeft}>
-          <View style={styles.hudPortrait}>
+          <TouchableOpacity style={styles.hudPortrait} onPress={() => setCharSheetVisible(true)}>
             <Text style={styles.hudPortraitEmoji}>{character?.race?.emoji || '⚔️'}</Text>
-          </View>
-          <View>
-            <Text style={styles.hudName}>{character?.name}</Text>
-            <Text style={styles.hudSub}>{character?.race?.name} {character?.class?.name} · Lv {character?.level}</Text>
+          </TouchableOpacity>
+          <View style={{ flex: 1 }}>
+            <Text style={styles.hudName} numberOfLines={1}>{character?.name}</Text>
+            <Text style={styles.hudSub} numberOfLines={1}>{character?.race?.name} {character?.class?.name} · Lv {character?.level}</Text>
           </View>
         </View>
         <View style={styles.hudRight}>
@@ -302,8 +451,18 @@ export default function DMConversationScreen({ navigation }) {
         </View>
       </View>
 
+      {/* ── Combat HUD ── */}
+      <CombatHUD
+        combatState={combatState}
+        combatTurnOrder={combatTurnOrder}
+        activeTurnIndex={activeTurnIndex}
+        activeEnemies={activeEnemies}
+        combatRound={combatRound}
+        playerConditions={character?.conditions}
+      />
+
       {/* ── Turn counter warning ── */}
-      {isNearLimit && (
+      {isNearLimit && combatState === 'EXPLORATION' && (
         <View style={styles.warnBar}>
           <Text style={styles.warnText}>⚠ {turnsLeft} turns remaining this session</Text>
         </View>
@@ -372,14 +531,63 @@ export default function DMConversationScreen({ navigation }) {
           </View>
         )}
 
+        {/* ── Death save UI (replaces input bar when DOWNED) ── */}
+        {combatState === 'DOWNED' && (
+          <View style={styles.deathSaveBar}>
+            <View style={styles.deathSavePips}>
+              <Text style={styles.deathSaveLabel}>Successes</Text>
+              <View style={styles.pipRow}>
+                {[0, 1, 2].map(i => (
+                  <View key={i} style={[styles.pip, i < deathSaves.successes && styles.pipSuccess]} />
+                ))}
+              </View>
+            </View>
+            <TouchableOpacity
+              style={[styles.deathSaveBtn, isLoading && styles.sendBtnDisabled]}
+              onPress={() => {
+                if (isLoading) return;
+                const result = rollDeathSave();
+                updateDeathSave(result);
+                const outcomeText = result.isCritical
+                  ? 'Natural 20 — you claw back to 1 HP!'
+                  : result.isFumble
+                  ? 'Natural 1 — two failures!'
+                  : result.success
+                  ? 'Success.'
+                  : 'Failure.';
+                addMessage({
+                  id: `death_save_${Date.now()}`,
+                  role: 'assistant',
+                  content: { system_text: `Death save: ${result.roll} — ${outcomeText}` },
+                  personaName: selectedPersona?.name,
+                  personaEmoji: selectedPersona?.emoji,
+                  timestamp: Date.now(),
+                });
+                Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Heavy);
+              }}
+              disabled={isLoading}
+            >
+              <Text style={styles.deathSaveBtnText}>Roll Death Save (d20)</Text>
+            </TouchableOpacity>
+            <View style={styles.deathSavePips}>
+              <Text style={styles.deathSaveLabel}>Failures</Text>
+              <View style={styles.pipRow}>
+                {[0, 1, 2].map(i => (
+                  <View key={i} style={[styles.pip, i < deathSaves.failures && styles.pipFailure]} />
+                ))}
+              </View>
+            </View>
+          </View>
+        )}
+
         {/* ── Input bar ── */}
-        {!diceVisible && !isAtLimit && (
+        {!diceVisible && !isAtLimit && combatState !== 'DOWNED' && (
           <View style={styles.inputBar}>
             <TextInput
               style={styles.input}
               value={inputText}
               onChangeText={setInputText}
-              placeholder="What do you do?"
+              placeholder={combatState === 'COMBAT_STATE' ? 'Describe your attack or action…' : 'What do you do?'}
               placeholderTextColor={COLORS.textMuted}
               multiline
               maxLength={500}
@@ -451,6 +659,90 @@ export default function DMConversationScreen({ navigation }) {
         </Modal>
       )}
 
+      {/* ── Character Sheet ── */}
+      <Modal visible={charSheetVisible} animationType="slide" transparent onRequestClose={() => setCharSheetVisible(false)}>
+        <View style={styles.sheetBackdrop}>
+          <View style={styles.charSheet}>
+            <View style={styles.sheetHandle} />
+            <View style={styles.sheetHeaderRow}>
+              <View style={{ flex: 1 }}>
+                <Text style={styles.sheetName}>{character?.name}</Text>
+                <Text style={styles.sheetMeta}>{character?.race?.name} {character?.class?.name} · Level {character?.level}</Text>
+              </View>
+              <TouchableOpacity onPress={() => setCharSheetVisible(false)} style={styles.sheetDoneBtn}>
+                <Text style={styles.sheetDoneText}>Done</Text>
+              </TouchableOpacity>
+            </View>
+            <ScrollView showsVerticalScrollIndicator={false} contentContainerStyle={styles.sheetScroll}>
+              {/* Vitals */}
+              <View style={styles.sheetVitals}>
+                {[
+                  { label: 'HP', value: `${character?.currentHP}/${character?.maxHP}`, color: hpColor },
+                  { label: 'AC', value: character?.AC, color: COLORS.textSystem },
+                  { label: 'Speed', value: `${character?.speed}ft`, color: COLORS.textSecondary },
+                  { label: 'Prof', value: `+${character?.proficiencyBonus}`, color: COLORS.primary },
+                ].map(({ label, value, color }) => (
+                  <View key={label} style={styles.vitalCell}>
+                    <Text style={[styles.vitalValue, { color }]}>{value}</Text>
+                    <Text style={styles.vitalLabel}>{label}</Text>
+                  </View>
+                ))}
+              </View>
+              {/* Ability scores */}
+              <Text style={styles.sheetSection}>Ability Scores</Text>
+              <View style={styles.abilityGrid}>
+                {['STR', 'DEX', 'CON', 'INT', 'WIS', 'CHA'].map(key => {
+                  const score = character?.abilityScores?.[key] || 10;
+                  const mod = Math.floor((score - 10) / 2);
+                  const modStr = mod >= 0 ? `+${mod}` : `${mod}`;
+                  return (
+                    <View key={key} style={styles.abilityCell}>
+                      <Text style={[styles.abilityCellMod, { color: mod >= 0 ? COLORS.success : COLORS.hpLow }]}>{modStr}</Text>
+                      <Text style={styles.abilityCellScore}>{score}</Text>
+                      <Text style={styles.abilityCellKey}>{key}</Text>
+                    </View>
+                  );
+                })}
+              </View>
+              {/* Proficient skills */}
+              {character?.proficientSkills?.length > 0 && (
+                <>
+                  <Text style={styles.sheetSection}>Proficiencies</Text>
+                  <View style={styles.skillsWrap}>
+                    {character.proficientSkills.map((s, i) => (
+                      <View key={i} style={styles.skillTag}>
+                        <Text style={styles.skillTagText}>{s}</Text>
+                      </View>
+                    ))}
+                  </View>
+                </>
+              )}
+              {/* Equipment */}
+              {character?.inventory?.length > 0 && (
+                <>
+                  <Text style={styles.sheetSection}>Equipment</Text>
+                  {character.inventory.map((item, i) => (
+                    <Text key={i} style={styles.sheetListItem}>• {item}</Text>
+                  ))}
+                </>
+              )}
+              {character?.gold > 0 && (
+                <Text style={styles.sheetGold}>{character.gold} gold pieces</Text>
+              )}
+              {/* Conditions */}
+              {character?.conditions?.length > 0 && (
+                <>
+                  <Text style={styles.sheetSection}>Conditions</Text>
+                  {character.conditions.map((c, i) => (
+                    <Text key={i} style={[styles.sheetListItem, { color: COLORS.danger }]}>⚠ {c}</Text>
+                  ))}
+                </>
+              )}
+            </ScrollView>
+          </View>
+        </View>
+      </Modal>
+
       {/* ── Chronicle Card ── */}
       {chronicleVisible && (
         <Modal transparent animationType="slide" visible={chronicleVisible} onRequestClose={() => setChronicleVisible(false)}>
@@ -489,7 +781,7 @@ const styles = StyleSheet.create({
 
   // ── Story area (focused single-response) ───────────────────────────────────
   storyArea: { flex: 1 },
-  storyContent: { padding: SPACING.md, paddingBottom: SPACING.lg, flexGrow: 1 },
+  storyContent: { padding: SPACING.md, paddingBottom: SPACING.xxl, flexGrow: 1 },
 
   campaignBar: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', marginBottom: SPACING.lg },
   campaignBarTitle: { fontFamily: 'Georgia', fontSize: 13, color: COLORS.textMuted, fontStyle: 'italic', flex: 1 },
@@ -511,7 +803,18 @@ const styles = StyleSheet.create({
   // ── Suggested actions ───────────────────────────────────────────────────────
   actionsContainer: { borderTopWidth: 1, borderTopColor: COLORS.border, paddingVertical: SPACING.xs, paddingHorizontal: SPACING.md, gap: 6 },
   actionChip: { backgroundColor: COLORS.surfaceElevated, borderRadius: RADIUS.sm, paddingHorizontal: SPACING.md, paddingVertical: 10, borderWidth: 1, borderColor: COLORS.border },
-  actionChipText: { color: COLORS.textSecondary, fontSize: 14, lineHeight: 20 },
+  actionChipText: { color: COLORS.textSecondary, fontSize: 13, lineHeight: 20, fontWeight: '400' },
+
+  // ── Death save bar ───────────────────────────────────────────────────────────
+  deathSaveBar: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', padding: SPACING.sm, paddingHorizontal: SPACING.md, borderTopWidth: 1, borderTopColor: COLORS.danger + '88', backgroundColor: COLORS.surface + 'EE', gap: SPACING.sm },
+  deathSavePips: { alignItems: 'center', gap: 4 },
+  deathSaveLabel: { color: COLORS.textMuted, fontSize: 9, textTransform: 'uppercase', letterSpacing: 0.8, fontWeight: '700' },
+  pipRow: { flexDirection: 'row', gap: 4 },
+  pip: { width: 10, height: 10, borderRadius: 5, borderWidth: 1, borderColor: COLORS.border, backgroundColor: COLORS.surfaceElevated },
+  pipSuccess: { backgroundColor: COLORS.success, borderColor: COLORS.success },
+  pipFailure: { backgroundColor: COLORS.danger, borderColor: COLORS.danger },
+  deathSaveBtn: { flex: 1, backgroundColor: COLORS.danger + 'DD', borderRadius: RADIUS.md, paddingVertical: 12, alignItems: 'center', borderWidth: 1, borderColor: COLORS.danger },
+  deathSaveBtnText: { color: COLORS.white, fontSize: FONT_SIZES.sm, fontWeight: '800', letterSpacing: 0.3 },
 
   // ── Input bar ───────────────────────────────────────────────────────────────
   inputBar: { flexDirection: 'row', alignItems: 'flex-end', gap: SPACING.xs, padding: SPACING.sm, paddingHorizontal: SPACING.md, borderTopWidth: 1, borderTopColor: COLORS.border, backgroundColor: COLORS.surface },
@@ -529,6 +832,32 @@ const styles = StyleSheet.create({
   historyClose: { paddingVertical: SPACING.xs, paddingHorizontal: SPACING.sm },
   historyCloseText: { fontSize: 14, color: COLORS.primary, fontWeight: '700' },
   historyScroll: { padding: SPACING.md, paddingBottom: SPACING.xl },
+
+  // ── Character Sheet ──────────────────────────────────────────────────────────
+  sheetBackdrop: { flex: 1, justifyContent: 'flex-end', backgroundColor: 'rgba(0,0,0,0.6)' },
+  charSheet: { backgroundColor: COLORS.surface, borderTopLeftRadius: RADIUS.xxl, borderTopRightRadius: RADIUS.xxl, borderTopWidth: 1, borderColor: COLORS.border, maxHeight: '90%' },
+  sheetHandle: { width: 36, height: 4, borderRadius: 2, backgroundColor: COLORS.border, alignSelf: 'center', marginTop: SPACING.sm, marginBottom: SPACING.xs },
+  sheetHeaderRow: { flexDirection: 'row', alignItems: 'center', paddingHorizontal: SPACING.lg, paddingVertical: SPACING.sm, borderBottomWidth: 1, borderBottomColor: COLORS.border },
+  sheetName: { fontFamily: 'Georgia', fontSize: FONT_SIZES.xl, color: COLORS.textPrimary, fontWeight: '700' },
+  sheetMeta: { fontFamily: 'System', fontSize: FONT_SIZES.xs, color: COLORS.textSecondary, marginTop: 2 },
+  sheetDoneBtn: { paddingVertical: SPACING.xs, paddingHorizontal: SPACING.sm },
+  sheetDoneText: { fontSize: 14, color: COLORS.primary, fontWeight: '700' },
+  sheetScroll: { padding: SPACING.lg, paddingBottom: SPACING.xxl },
+  sheetVitals: { flexDirection: 'row', justifyContent: 'space-around', backgroundColor: COLORS.surfaceElevated, borderRadius: RADIUS.lg, padding: SPACING.md, marginBottom: SPACING.lg, borderWidth: 1, borderColor: COLORS.border },
+  vitalCell: { alignItems: 'center' },
+  vitalValue: { fontSize: 20, fontWeight: '800', fontFamily: 'Georgia' },
+  vitalLabel: { fontSize: 10, color: COLORS.textMuted, textTransform: 'uppercase', letterSpacing: 0.5, marginTop: 2 },
+  sheetSection: { fontSize: FONT_SIZES.xs, color: COLORS.textMuted, textTransform: 'uppercase', letterSpacing: 1, fontWeight: '700', marginBottom: SPACING.sm, marginTop: SPACING.md },
+  abilityGrid: { flexDirection: 'row', justifyContent: 'space-between', marginBottom: SPACING.sm },
+  abilityCell: { alignItems: 'center', backgroundColor: COLORS.surfaceElevated, borderRadius: RADIUS.md, paddingVertical: SPACING.sm, paddingHorizontal: 4, flex: 1, marginHorizontal: 2, borderWidth: 1, borderColor: COLORS.border },
+  abilityCellMod: { fontSize: 18, fontWeight: '900', fontFamily: 'Georgia' },
+  abilityCellScore: { fontSize: 11, color: COLORS.textSecondary, marginTop: 1 },
+  abilityCellKey: { fontSize: 9, color: COLORS.textMuted, textTransform: 'uppercase', letterSpacing: 0.3, marginTop: 1 },
+  skillsWrap: { flexDirection: 'row', flexWrap: 'wrap', gap: SPACING.xs, marginBottom: SPACING.sm },
+  skillTag: { backgroundColor: COLORS.primaryFaint, borderWidth: 1, borderColor: COLORS.primaryDark, borderRadius: RADIUS.pill, paddingHorizontal: SPACING.sm, paddingVertical: 3 },
+  skillTagText: { fontSize: FONT_SIZES.xs, color: COLORS.primary, fontWeight: '600' },
+  sheetListItem: { fontSize: FONT_SIZES.sm, color: COLORS.textSecondary, marginBottom: 4 },
+  sheetGold: { fontSize: FONT_SIZES.sm, color: COLORS.primary, fontStyle: 'italic', marginTop: SPACING.xs, marginBottom: SPACING.sm },
 
   // ── Loot ────────────────────────────────────────────────────────────────────
   lootOverlay: { flex: 1, backgroundColor: COLORS.overlay, justifyContent: 'center', alignItems: 'center', padding: SPACING.xl },

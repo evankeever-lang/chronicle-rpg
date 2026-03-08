@@ -2,13 +2,14 @@ import React from 'react';
 import { View, Text, StyleSheet } from 'react-native';
 import { COLORS, FONTS, FONT_SIZES, SPACING, RADIUS } from '../constants/theme';
 
-/**
- * Renders a single message from the uiMessages array.
- * Handles the role-based format used by DMConversationScreen:
- *   - role === 'user'      → player bubble (displayText)
- *   - role === 'assistant' → structured DM response object (narration, npc_dialogue, system_text)
- */
+// Visual language:
+// Narration  — the world speaking. Warm parchment background, serif prose, no speaker label.
+// NPC        — a person speaking. Cool-tinted bg, name badge pill, quoted dialogue.
+// System     — mechanical outcomes. Bordered card, icon + label.
+// Player     — right-aligned bubble.
+
 export default function DMMessage({ message }) {
+  // ── Player message (role === 'user') ────────────────────────────────────────
   if (message.role === 'user') {
     if (!message.displayText) return null;
     return (
@@ -20,14 +21,17 @@ export default function DMMessage({ message }) {
     );
   }
 
+  // ── DM message (role === 'assistant') ───────────────────────────────────────
   if (message.role === 'assistant') {
     const c = message.content;
+    if (!c) return null;
+
     // Fallback: plain string (e.g. error messages)
     if (typeof c === 'string') {
       return <NarrationBlock text={c} />;
     }
-    if (!c) return null;
-    // npc_dialogue can be a single { name, text } object or an array of them
+
+    // Normalize npc_dialogue to array
     const npcLines = Array.isArray(c.npc_dialogue)
       ? c.npc_dialogue.filter(n => n?.text)
       : (c.npc_dialogue?.text ? [c.npc_dialogue] : []);
@@ -48,9 +52,9 @@ export default function DMMessage({ message }) {
 
 function NarrationBlock({ text }) {
   return (
-    <View style={styles.dmRow}>
-      <View style={[styles.accentBar, { backgroundColor: COLORS.accentNarration }]} />
-      <View style={styles.dmContent}>
+    <View style={styles.narrationBlock}>
+      <View style={styles.narrationBar} />
+      <View style={styles.narrationContent}>
         <Text style={styles.narrationText}>{text}</Text>
       </View>
     </View>
@@ -59,31 +63,63 @@ function NarrationBlock({ text }) {
 
 function NpcBlock({ name, text }) {
   return (
-    <View style={styles.dmRow}>
-      <View style={[styles.accentBar, { backgroundColor: COLORS.accentNPC }]} />
-      <View style={styles.dmContent}>
-        {!!name && <Text style={styles.npcName}>{name}</Text>}
-        <Text style={styles.npcText}>"{text}"</Text>
+    <View style={styles.npcBlock}>
+      <View style={styles.npcBar} />
+      <View style={styles.npcContent}>
+        {!!name && (
+          <View style={styles.npcNameBadge}>
+            <Text style={styles.npcNameText}>{name}</Text>
+          </View>
+        )}
+        <Text style={styles.npcDialogue}>
+          <Text style={styles.npcQuoteMark}>"</Text>
+          {text}
+          <Text style={styles.npcQuoteMark}>"</Text>
+        </Text>
       </View>
     </View>
   );
 }
 
 function SystemBlock({ content }) {
+  return <SystemMessage content={content} />;
+}
+
+function SystemMessage({ content }) {
+  // Infer icon from the content string produced by callDM
+  const icon = content?.toLowerCase().includes('check') ? '🎲'
+    : content?.toLowerCase().includes('loot') || content?.toLowerCase().includes('discover') ? '📦'
+    : content?.toLowerCase().includes('combat') ? '⚔️'
+    : '⚡';
+
   return (
     <View style={styles.systemRow}>
       <View style={styles.systemContainer}>
         <View style={styles.systemHeader}>
-          <Text style={styles.systemIcon}>•</Text>
+          <Text style={styles.systemIcon}>{icon}</Text>
+          {content ? <Text style={styles.systemLabel}>{content}</Text> : null}
         </View>
-        <Text style={styles.systemText}>{content}</Text>
       </View>
     </View>
   );
 }
 
+// ─── Accent colours ───────────────────────────────────────────────────────────
+const NARRATION_BAR    = '#C9A84C';   // gold
+const NARRATION_BG     = '#1C1608';   // very dark warm amber — parchment in shadow
+const NARRATION_TEXT   = '#EDE0C4';   // warm cream
+
+const NPC_BAR          = '#4A9B7E';   // teal
+const NPC_BG           = '#081614';   // very dark cool teal
+const NPC_BADGE_BG     = '#4A9B7E22'; // teal wash
+const NPC_BADGE_BORDER = '#4A9B7E66';
+const NPC_NAME_TEXT    = '#7EB8A0';   // teal
+const NPC_DIALOGUE     = '#C8DED8';   // cool off-white
+const NPC_QUOTE        = '#4A9B7E';   // teal quote marks
+
 const styles = StyleSheet.create({
-  // Player message
+
+  // ── Player bubble ──────────────────────────────────────────────────────────
   playerRow: {
     flexDirection: 'row',
     justifyContent: 'flex-end',
@@ -92,90 +128,148 @@ const styles = StyleSheet.create({
   },
   playerBubble: {
     maxWidth: '78%',
-    backgroundColor: COLORS.primaryFaint,
+    backgroundColor: '#1A1630',
     borderWidth: 1,
-    borderColor: COLORS.primaryDark,
+    borderColor: '#3A3460',
     borderRadius: RADIUS.lg,
     borderBottomRightRadius: RADIUS.sm,
     paddingHorizontal: SPACING.md,
     paddingVertical: SPACING.sm,
   },
   playerText: {
-    fontFamily: FONTS.sansSerif,
-    fontSize: FONT_SIZES.md,
-    color: COLORS.textPrimary,
+    fontFamily: FONTS?.sansSerif || 'System',
+    fontSize: FONT_SIZES?.md || 15,
+    color: '#EDE8D5',
     lineHeight: 22,
   },
 
-  // DM narration / NPC row (left-aligned with accent bar)
-  dmRow: {
+  // ── Narration block ────────────────────────────────────────────────────────
+  // Distinct warm parchment feel — clearly "the world describing"
+  narrationBlock: {
     flexDirection: 'row',
-    marginVertical: SPACING.xs,
-    paddingHorizontal: SPACING.md,
+    marginVertical: SPACING.sm,
+    marginHorizontal: SPACING.md,
+    borderRadius: RADIUS.md,
+    overflow: 'hidden',
+    backgroundColor: NARRATION_BG,
   },
-  accentBar: {
+  narrationBar: {
     width: 3,
-    borderRadius: 2,
-    marginRight: SPACING.sm,
-    flexShrink: 0,
+    backgroundColor: NARRATION_BAR,
   },
-  dmContent: {
+  narrationContent: {
     flex: 1,
+    paddingHorizontal: SPACING.md,
+    paddingVertical: SPACING.md,
   },
-
-  // Narration
   narrationText: {
-    fontFamily: FONTS.serif,
-    fontSize: FONT_SIZES.md,
-    color: COLORS.textNarration,
-    lineHeight: 24,
+    fontFamily: FONTS?.serif || 'Georgia',
+    fontSize: FONT_SIZES?.md || 15,
+    color: NARRATION_TEXT,
+    lineHeight: 26,
     letterSpacing: 0.2,
   },
 
-  // NPC dialogue
-  npcName: {
-    fontFamily: FONTS.sansSerif,
-    fontSize: FONT_SIZES.sm,
-    color: COLORS.accentNPC,
+  // ── NPC dialogue block ─────────────────────────────────────────────────────
+  // Cool-tinted, clearly "a person speaking"
+  npcBlock: {
+    flexDirection: 'row',
+    marginVertical: SPACING.xs,
+    marginHorizontal: SPACING.md,
+    borderRadius: RADIUS.md,
+    overflow: 'hidden',
+    backgroundColor: NPC_BG,
+  },
+  npcBar: {
+    width: 3,
+    backgroundColor: NPC_BAR,
+  },
+  npcContent: {
+    flex: 1,
+    paddingHorizontal: SPACING.md,
+    paddingVertical: SPACING.sm,
+  },
+  npcNameBadge: {
+    alignSelf: 'flex-start',
+    backgroundColor: NPC_BADGE_BG,
+    borderWidth: 1,
+    borderColor: NPC_BADGE_BORDER,
+    borderRadius: RADIUS.pill || 999,
+    paddingHorizontal: 10,
+    paddingVertical: 3,
+    marginBottom: 7,
+  },
+  npcNameText: {
+    fontFamily: FONTS?.sansSerif || 'System',
+    fontSize: (FONT_SIZES?.sm || 12),
+    color: NPC_NAME_TEXT,
     fontWeight: '700',
     textTransform: 'uppercase',
-    letterSpacing: 0.8,
-    marginBottom: 3,
+    letterSpacing: 1,
   },
-  npcText: {
-    fontFamily: FONTS.serif,
-    fontSize: FONT_SIZES.md,
-    color: COLORS.textNPC,
+  npcDialogue: {
+    fontFamily: FONTS?.serif || 'Georgia',
+    fontSize: FONT_SIZES?.md || 15,
+    color: NPC_DIALOGUE,
     lineHeight: 24,
     fontStyle: 'italic',
   },
+  npcQuoteMark: {
+    color: NPC_QUOTE,
+    fontSize: (FONT_SIZES?.md || 15) + 2,
+    fontStyle: 'normal',
+    fontWeight: '700',
+  },
 
-  // System messages
+  // ── System messages ────────────────────────────────────────────────────────
   systemRow: {
     marginVertical: SPACING.sm,
     paddingHorizontal: SPACING.md,
   },
   systemContainer: {
-    backgroundColor: COLORS.surfaceElevated,
+    backgroundColor: '#16122A',
     borderWidth: 1,
-    borderColor: COLORS.accentSystem,
+    borderColor: '#8A7AC066',
     borderRadius: RADIUS.md,
     padding: SPACING.md,
   },
   systemHeader: {
     flexDirection: 'row',
     alignItems: 'center',
-    marginBottom: 4,
+    marginBottom: 6,
   },
   systemIcon: {
     fontSize: 16,
-    color: COLORS.textSystem,
     marginRight: 6,
   },
+  systemLabel: {
+    fontFamily: FONTS?.sansSerif || 'System',
+    fontSize: FONT_SIZES?.sm || 12,
+    color: '#8A7AC0',
+    fontWeight: '700',
+    textTransform: 'uppercase',
+    letterSpacing: 0.8,
+  },
   systemText: {
-    fontFamily: FONTS.sansSerif,
-    fontSize: FONT_SIZES.sm,
-    color: COLORS.textSecondary,
+    fontFamily: FONTS?.sansSerif || 'System',
+    fontSize: FONT_SIZES?.sm || 12,
+    color: '#9B9480',
     lineHeight: 20,
+  },
+  lootList: {
+    marginTop: SPACING.xs,
+  },
+  lootItem: {
+    fontFamily: FONTS?.sansSerif || 'System',
+    fontSize: FONT_SIZES?.sm || 12,
+    color: '#EDE8D5',
+    lineHeight: 20,
+  },
+  lootGold: {
+    fontFamily: FONTS?.sansSerif || 'System',
+    fontSize: FONT_SIZES?.sm || 12,
+    color: '#C9A84C',
+    fontWeight: '700',
+    marginTop: 4,
   },
 });

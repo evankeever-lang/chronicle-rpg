@@ -61,8 +61,8 @@ export default function CharacterCreationScreen({ navigation }) {
 
     setCharacter({
       name: characterName.trim(),
-      race: race.name,
-      class: cls.name,
+      race: { name: race.name, emoji: race.emoji },
+      class: { name: cls.name, emoji: cls.emoji },
       level: 1,
       abilityScores: finalScores,
       maxHP,
@@ -70,7 +70,7 @@ export default function CharacterCreationScreen({ navigation }) {
       AC,
       speed: race.speed,
       proficiencyBonus: profBonus,
-      skills: cls.skillChoices?.options?.slice(0, cls.skillChoices.count) || [],
+      proficientSkills: cls.skillChoices?.options?.slice(0, cls.skillChoices.count) || [],
       inventory: [...(cls.startingEquipment || [])],
       gold: 10,
       conditions: [],
@@ -275,7 +275,7 @@ function StepStats({ baseScores, finalScores, race, pointsRemaining, onAdjust })
               </TouchableOpacity>
             </View>
             <View style={styles.statMod}>
-              <Text style={[styles.statModText, mod >= 0 ? styles.statModPos : styles.statModNeg]}>
+              <Text style={[styles.statModText, base === 8 ? styles.statModNeutral : (mod >= 0 ? styles.statModPos : styles.statModNeg)]}>
                 {getModifierString(mod)}
               </Text>
             </View>
@@ -413,6 +413,7 @@ const styles = StyleSheet.create({
   statModText: { fontFamily: FONTS.sansSerif, fontSize: FONT_SIZES.md, fontWeight: '700' },
   statModPos: { color: COLORS.success },
   statModNeg: { color: COLORS.danger },
+  statModNeutral: { color: COLORS.textMuted },
 
   // Name
   summaryCard: { backgroundColor: COLORS.surface, borderWidth: 1, borderColor: COLORS.border, borderRadius: RADIUS.xl, padding: SPACING.lg, alignItems: 'center', marginBottom: SPACING.lg },

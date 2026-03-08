@@ -19,7 +19,7 @@ import { COLORS, FONTS, FONT_SIZES, SPACING, RADIUS, SHADOWS } from '../constant
 const HOW_TO_PLAY = [
   {
     heading: 'Your AI Dungeon Master',
-    body: 'Chronicle uses Claude AI to play a living Dungeon Master. It remembers your choices, reacts to your decisions, and shapes the story around you. Type anything — describe what you do, say, or investigate.',
+    body: 'Chronicle uses an AI Dungeon Master that remembers your choices, reacts to your decisions, and shapes the story around you. Type anything — describe what you do, say, or investigate.',
   },
   {
     heading: 'Sessions & Turns',
@@ -35,7 +35,7 @@ const HOW_TO_PLAY = [
   },
   {
     heading: 'The Chronicle',
-    body: "At session end, Claude writes The Chronicle — a third-person narrative of your adventure — and assigns you an epithet based on how you played. Tap the scroll icon during play to end early and claim yours.",
+    body: "At session end, your Chronicle is automatically written — a third-person narrative of your adventure — and you're assigned an epithet based on how you played.",
   },
   {
     heading: 'Your Character',
