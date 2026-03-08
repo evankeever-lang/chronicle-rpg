@@ -1,0 +1,28 @@
+{
+  "expo": {
+    "name": "Project Chronicle",
+    "slug": "chronicle-rpg",
+    "version": "0.1.0",
+    "orientation": "portrait",
+    "icon": "./assets/icon.png",
+    "userInterfaceStyle": "dark",
+    "splash": {
+      "image": "./assets/splash-icon.png",
+      "resizeMode": "contain",
+      "backgroundColor": "#0D0B07"
+    },
+    "assetBundlePatterns": ["**/*"],
+    "ios": {
+      "supportsTablet": true,
+      "bundleIdentifier": "com.chronicle.rpg"
+    },
+    "android": {
+      "adaptiveIcon": {
+        "foregroundImage": "./assets/adaptive-icon.png",
+        "backgroundColor": "#0D0B07"
+      },
+      "package": "com.chronicle.rpg"
+    },
+    "sdkVersion": "55.0.0"
+  }
+}
