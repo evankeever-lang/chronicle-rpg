@@ -115,7 +115,7 @@ export default function MainMenuScreen({ navigation }) {
 
   return (
     <ImageBackground
-      source={require('../../assets/menu-background.png')}
+      source={require('../../assets/menu-background.jpeg')}
       style={styles.bgImage}
       resizeMode="cover"
     >

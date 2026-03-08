@@ -285,6 +285,9 @@ export function GameProvider({ children }) {
   const endSession = () => dispatch({ type: 'END_SESSION' });
   const resetGame = () => dispatch({ type: 'RESET_GAME' });
 
+  /** Flush state to disk immediately (bypasses the debounce). Use before reset/exit. */
+  const saveNow = () => saveGame(state);
+
   /** Restore a save from disk into the running context (called from MainMenu). */
   const loadSavedGame = (saveData) => dispatch({ type: 'LOAD_GAME', payload: saveData });
 
@@ -330,6 +333,7 @@ export function GameProvider({ children }) {
         setSessionSummary,
         endSession,
         resetGame,
+        saveNow,
         loadSavedGame,
         // Combat
         initCombat,

@@ -25,9 +25,14 @@ Keep sessions to 15–20 exchanges. Introduce dice rolls naturally: a Perception
     // - sets_flag: written to session_flags after the beat fires (handled in claude.js)
     tutorial_beats: [
       {
+        id: 'opening_scene',
+        trigger_at_message: 1,
+        system_injection: `OPENING SCENE (this turn only): Begin the story inside the Ashwick inn. Elara — the elderly innkeeper, grey-haired, aproned, visibly tired — is finishing her explanation to the player right now. She should speak 1–2 lines of direct dialogue describing the scratching sounds from the cellar and asking them to take a look tonight. Keep her grounded and worried, not dramatic. End with the player standing near the cellar door, ready to decide what to do. Do NOT begin in the cellar itself.`,
+      },
+      {
         id: 'goblin_plant',
         trigger_at_message: 5,
-        system_injection: `SCENE DIRECTIVE (this turn only): The player has entered or is about to enter the cellar. Introduce Mik — a small goblin who has been cornered near the back wall. He drops his crude weapon and holds up his hands, whimpering quietly. Do NOT have him say "I have hatchlings" yet — let that emerge if the player presses or threatens him. Make this moment feel small and incidental, not dramatic. One short paragraph. The player should not feel this is a pivot point. Move on naturally.`,
+        system_injection: `SCENE DIRECTIVE (this turn only): The player has entered or is about to enter the cellar. Introduce Mik — a small goblin who has been cornered near the back wall. He drops his crude weapon and holds up his hands, whimpering quietly. Do NOT have him say "I have hatchlings" yet — let that emerge if the player presses or threatens him. Make this moment feel small and incidental, not dramatic. One short paragraph. The player should not feel this is a pivot point. Move on naturally. IMPORTANT: This goblin's name is Mik. Use "Mik" consistently in narration, dialogue, suggested_actions, and in state_updates.enemies if combat starts — never "small goblin", "the goblin", or "it" once his name is established.`,
         sets_flag: 'goblin_encountered',
       },
       {

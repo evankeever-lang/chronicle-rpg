@@ -2,7 +2,7 @@
 import React, { useState, useRef, useCallback, useEffect } from 'react';
 import {
   View, Text, StyleSheet, ScrollView, TextInput, TouchableOpacity,
-  SafeAreaView, KeyboardAvoidingView, Platform, Modal, StatusBar, Animated,
+  SafeAreaView, KeyboardAvoidingView, Platform, Modal, StatusBar, Animated, Keyboard, Alert,
 } from 'react-native';
 import { LinearGradient } from 'expo-linear-gradient';
 import * as Haptics from 'expo-haptics';
@@ -56,6 +56,7 @@ export default function DMConversationScreen({ navigation }) {
     setCharacter,
     setSessionSummary,
     resetGame: resetSession,
+    saveNow,
     // Combat
     combatState,
     combatTurnOrder,
@@ -80,6 +81,53 @@ export default function DMConversationScreen({ navigation }) {
   const [isLoading, setLoading] = useState(false);
   const [historyVisible, setHistoryVisible] = useState(false);
   const [charSheetVisible, setCharSheetVisible] = useState(false);
+
+  // ── Save & Exit ───────────────────────────────────────────────────────────────
+  // Flag lets our own button bypass the beforeRemove confirmation.
+  const isExitingIntentionally = useRef(false);
+
+  useEffect(() => {
+    const unsubscribe = navigation.addListener('beforeRemove', (e) => {
+      if (isExitingIntentionally.current) return; // allow programmatic exit
+      e.preventDefault();
+      Alert.alert(
+        'Leave Adventure?',
+        'Your progress is auto-saved. You can continue later from the main menu.',
+        [
+          { text: 'Stay', style: 'cancel' },
+          {
+            text: 'Save & Exit',
+            onPress: async () => {
+              await saveNow();
+              isExitingIntentionally.current = true;
+              resetSession();
+              navigation.dispatch(e.data.action);
+            },
+          },
+        ]
+      );
+    });
+    return unsubscribe;
+  }, [navigation]);
+
+  const handleSaveAndExit = () => {
+    Alert.alert(
+      'Leave Adventure?',
+      'Your progress is saved. You can continue later from the main menu.',
+      [
+        { text: 'Stay', style: 'cancel' },
+        {
+          text: 'Save & Exit',
+          onPress: async () => {
+            await saveNow();
+            isExitingIntentionally.current = true;
+            resetSession();
+            navigation.navigate('MainMenu');
+          },
+        },
+      ]
+    );
+  };
 
   // Apply structured state updates from DM JSON response
   const applyStateUpdates = (updates) => {
@@ -332,6 +380,7 @@ export default function DMConversationScreen({ navigation }) {
     };
     addMessage(userMsg);
     setInputText('');
+    Keyboard.dismiss();
     setLoading(true);
     Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
 
@@ -434,6 +483,9 @@ export default function DMConversationScreen({ navigation }) {
       {/* ── HUD ── */}
       <View style={styles.hud}>
         <View style={styles.hudLeft}>
+          <TouchableOpacity style={styles.hudExitBtn} onPress={handleSaveAndExit} hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}>
+            <Text style={styles.hudExitText}>←</Text>
+          </TouchableOpacity>
           <TouchableOpacity style={styles.hudPortrait} onPress={() => setCharSheetVisible(true)}>
             <Text style={styles.hudPortraitEmoji}>{character?.race?.emoji || '⚔️'}</Text>
           </TouchableOpacity>
@@ -765,7 +817,9 @@ const styles = StyleSheet.create({
   container: { flex: 1, backgroundColor: COLORS.background },
 
   hud: { flexDirection: 'row', alignItems: 'center', paddingHorizontal: SPACING.md, paddingVertical: SPACING.sm, borderBottomWidth: 1, borderBottomColor: COLORS.border, gap: SPACING.sm, backgroundColor: COLORS.surface + 'CC' },
-  hudLeft: { flex: 1, flexDirection: 'row', alignItems: 'center', gap: SPACING.xs },
+  hudLeft: { flex: 1, flexDirection: 'row', alignItems: 'center', gap: SPACING.sm },
+  hudExitBtn: { paddingRight: 2 },
+  hudExitText: { color: COLORS.textMuted, fontSize: 20, lineHeight: 24 },
   hudPortrait: { width: 36, height: 36, borderRadius: RADIUS.sm, backgroundColor: COLORS.surfaceElevated, alignItems: 'center', justifyContent: 'center', borderWidth: 1, borderColor: COLORS.primaryDark },
   hudPortraitEmoji: { fontSize: 18 },
   hudName: { color: COLORS.textPrimary, fontSize: 13, fontWeight: '700' },
