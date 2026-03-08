@@ -9,6 +9,7 @@ import {
   Alert,
   Modal,
   ScrollView,
+  ImageBackground,
 } from 'react-native';
 import { LinearGradient } from 'expo-linear-gradient';
 import { loadGame, deleteSave, timeSince } from '../utils/storage';
@@ -113,8 +114,17 @@ export default function MainMenuScreen({ navigation }) {
   const hasSave = !!saveData;
 
   return (
+    <ImageBackground
+      source={require('../../assets/menu-background.png')}
+      style={styles.bgImage}
+      resizeMode="cover"
+    >
     <SafeAreaView style={styles.safe}>
-      <LinearGradient colors={['#0D0B07', '#0F0C10', '#09080F']} style={StyleSheet.absoluteFill} />
+      {/* Dark overlay so UI text stays legible over the image */}
+      <LinearGradient
+        colors={['rgba(9,8,15,0.55)', 'rgba(13,11,7,0.72)', 'rgba(9,8,15,0.90)']}
+        style={StyleSheet.absoluteFill}
+      />
       <View style={styles.glowTop} />
 
       <Animated.View style={[styles.content, { opacity: fadeAnim, transform: [{ translateY: slideAnim }] }]}>
@@ -201,7 +211,7 @@ export default function MainMenuScreen({ navigation }) {
       </Animated.View>
 
       {/* ── How to Play modal ── */}
-      <Modal visible={howToPlayVisible} animationType="slide" transparent onRequestClose={() => setHowToPlayVisible(false)}>
+      <Modal visible={howToPlayVisible} animationType="slide" transparent onRequestClose={() => setHowToPlayVisible(false)} >
         <View style={styles.modalBackdrop}>
           <View style={styles.modalSheet}>
             <View style={styles.modalHandle} />
@@ -226,12 +236,14 @@ export default function MainMenuScreen({ navigation }) {
         </View>
       </Modal>
     </SafeAreaView>
+    </ImageBackground>
   );
 }
 
 const styles = StyleSheet.create({
   splash: { flex: 1, backgroundColor: '#0D0B07' },
-  safe: { flex: 1, backgroundColor: '#0D0B07' },
+  bgImage: { flex: 1 },
+  safe: { flex: 1, backgroundColor: 'transparent' },
 
   glowTop: {
     position: 'absolute', top: -80, alignSelf: 'center',
