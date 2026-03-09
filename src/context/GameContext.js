@@ -138,8 +138,22 @@ function gameReducer(state, action) {
       };
 
     case 'ADVANCE_TURN': {
-      const nextIndex = (state.activeTurnIndex + 1) % Math.max(1, state.combatTurnOrder.length);
-      const newRound = nextIndex === 0 ? state.combatRound + 1 : state.combatRound;
+      const len = Math.max(1, state.combatTurnOrder.length);
+      let nextIndex = (state.activeTurnIndex + 1) % len;
+      let didCrossZero = nextIndex === 0;
+      let safetyCounter = 0;
+      // Skip dead non-player combatants; guard against infinite loop if all enemies are down
+      while (
+        safetyCounter < len - 1 &&
+        !state.combatTurnOrder[nextIndex]?.isPlayer &&
+        (state.combatTurnOrder[nextIndex]?.hp ?? 1) <= 0
+      ) {
+        safetyCounter++;
+        const candidate = (nextIndex + 1) % len;
+        if (candidate === 0 && nextIndex !== 0) didCrossZero = true;
+        nextIndex = candidate;
+      }
+      const newRound = didCrossZero ? state.combatRound + 1 : state.combatRound;
       return { ...state, activeTurnIndex: nextIndex, combatRound: newRound };
     }
 

@@ -3,7 +3,7 @@
 // Hidden during EXPLORATION and COMBAT_RESOLUTION.
 
 import React from 'react';
-import { View, Text, ScrollView, StyleSheet } from 'react-native';
+import { View, Text, ScrollView, StyleSheet, TouchableOpacity } from 'react-native';
 import { COLORS, FONTS, FONT_SIZES, SPACING, RADIUS } from '../constants/theme';
 
 // ─── Turn order token ─────────────────────────────────────────────────────────
@@ -64,18 +64,206 @@ function EnemyRow({ enemy }) {
   );
 }
 
+// ─── Enemy zone (battlefield view, shown during COMBAT_STATE) ─────────────────
+const ENEMY_SHAPE_PALETTE = [
+  { color: '#C96B6B' },
+  { color: '#6B8EC9' },
+  { color: '#6BB89E' },
+  { color: '#C9A84C' },
+];
+
+export function EnemyZone({ activeEnemies, isAttacking = false, onSelectEnemy }) {
+  if (!activeEnemies || activeEnemies.length === 0) return null;
+  return (
+    <View style={zoneStyles.container}>
+      {activeEnemies.map((enemy, idx) => {
+        const palette = ENEMY_SHAPE_PALETTE[idx % ENEMY_SHAPE_PALETTE.length];
+        const defeated = enemy.hp <= 0;
+        const selectable = isAttacking && !defeated;
+        const pct = enemy.maxHp > 0 ? enemy.hp / enemy.maxHp : 0;
+        const barColor = pct > 0.5 ? COLORS.danger : pct > 0.25 ? COLORS.warning : COLORS.hpLow;
+        const CardWrapper = selectable ? TouchableOpacity : View;
+        return (
+          <CardWrapper
+            key={enemy.id}
+            style={[zoneStyles.enemyCard, defeated && zoneStyles.defeated]}
+            onPress={selectable ? () => onSelectEnemy(enemy) : undefined}
+            activeOpacity={0.7}
+          >
+            <View style={[
+              zoneStyles.enemyShape,
+              { borderColor: selectable ? '#FF6B6B' : palette.color, backgroundColor: palette.color + '22' },
+              selectable && zoneStyles.enemyShapeSelectable,
+            ]} />
+            <Text
+              style={[zoneStyles.enemyName, defeated && zoneStyles.enemyNameDefeated]}
+              numberOfLines={1}
+            >
+              {enemy.name}
+            </Text>
+            {!defeated ? (
+              <>
+                <Text style={zoneStyles.hpText}>{enemy.hp}/{enemy.maxHp}</Text>
+                <View style={zoneStyles.hpBarBg}>
+                  <View style={[zoneStyles.hpBarFill, { width: `${Math.max(0, pct * 100)}%`, backgroundColor: barColor }]} />
+                </View>
+                <Text style={zoneStyles.acText}>AC {enemy.ac}</Text>
+                {selectable && <Text style={zoneStyles.tapHint}>Tap to attack</Text>}
+              </>
+            ) : (
+              <Text style={zoneStyles.defeatedLabel}>Defeated</Text>
+            )}
+            {enemy.conditions?.length > 0 && (
+              <View style={zoneStyles.conditionRow}>
+                {enemy.conditions.map((c, ci) => (
+                  <View key={ci} style={zoneStyles.conditionChip}>
+                    <Text style={zoneStyles.conditionText}>{c}</Text>
+                  </View>
+                ))}
+              </View>
+            )}
+          </CardWrapper>
+        );
+      })}
+    </View>
+  );
+}
+
+const zoneStyles = StyleSheet.create({
+  container: {
+    flexDirection: 'row',
+    justifyContent: 'space-around',
+    paddingHorizontal: SPACING.md,
+    paddingVertical: SPACING.md,
+    minHeight: 160,
+  },
+  enemyCard: {
+    flex: 1,
+    alignItems: 'center',
+    maxWidth: 120,
+  },
+  defeated: {
+    opacity: 0.3,
+  },
+  enemyShape: {
+    width: 64,
+    height: 64,
+    borderRadius: 32,
+    borderWidth: 2.5,
+    marginBottom: SPACING.xs,
+  },
+  enemyName: {
+    color: COLORS.textSecondary,
+    fontSize: FONT_SIZES.xs,
+    fontWeight: '700',
+    textAlign: 'center',
+    marginBottom: 2,
+  },
+  enemyNameDefeated: {
+    textDecorationLine: 'line-through',
+    color: COLORS.textMuted,
+  },
+  hpText: {
+    color: COLORS.textMuted,
+    fontSize: 10,
+    marginBottom: 2,
+  },
+  hpBarBg: {
+    width: 72,
+    height: 5,
+    backgroundColor: COLORS.border,
+    borderRadius: 3,
+    overflow: 'hidden',
+    marginBottom: 2,
+  },
+  hpBarFill: {
+    height: '100%',
+    borderRadius: 3,
+  },
+  acText: {
+    color: COLORS.textMuted,
+    fontSize: 10,
+  },
+  enemyShapeSelectable: {
+    borderWidth: 3,
+    borderColor: '#FF6B6B',
+  },
+  tapHint: {
+    color: '#FF6B6B',
+    fontSize: 9,
+    fontWeight: '700',
+    marginTop: 2,
+    textTransform: 'uppercase',
+    letterSpacing: 0.3,
+  },
+  defeatedLabel: {
+    color: COLORS.textMuted,
+    fontSize: 10,
+    fontStyle: 'italic',
+  },
+  conditionRow: {
+    flexDirection: 'row',
+    flexWrap: 'wrap',
+    justifyContent: 'center',
+    gap: 2,
+    marginTop: 3,
+  },
+  conditionChip: {
+    backgroundColor: COLORS.accentDanger + '22',
+    borderRadius: RADIUS.pill,
+    paddingHorizontal: 4,
+    paddingVertical: 1,
+  },
+  conditionText: {
+    color: COLORS.hpLow,
+    fontSize: 8,
+    fontWeight: '700',
+  },
+});
+
+// ─── Combat log strip (last N system messages) ─────────────────────────────────
+export function CombatLogStrip({ messages }) {
+  if (!messages || messages.length === 0) return null;
+  const lines = messages.slice(-3);
+  return (
+    <View style={logStyles.container}>
+      {lines.map((m, i) => (
+        <Text key={m.id || i} style={logStyles.line} numberOfLines={1}>
+          {m.content.system_text}
+        </Text>
+      ))}
+    </View>
+  );
+}
+
+const logStyles = StyleSheet.create({
+  container: {
+    backgroundColor: COLORS.surfaceElevated,
+    borderTopWidth: 1,
+    borderBottomWidth: 1,
+    borderColor: COLORS.border,
+    paddingHorizontal: SPACING.md,
+    paddingVertical: SPACING.xs,
+    gap: 2,
+  },
+  line: {
+    color: COLORS.textMuted,
+    fontSize: 11,
+    lineHeight: 15,
+  },
+});
+
 // ─── Main HUD ─────────────────────────────────────────────────────────────────
 export default function CombatHUD({
   combatState,
   combatTurnOrder,
   activeTurnIndex,
-  activeEnemies,
   combatRound,
   playerConditions,
 }) {
-  const visible = combatState === 'COMBAT_INIT'
-    || combatState === 'COMBAT_STATE'
-    || combatState === 'DOWNED';
+  // Stay visible through COMBAT_RESOLUTION so HUD persists while outro narration renders.
+  // Only unmount when RESET_COMBAT returns to EXPLORATION.
+  const visible = combatState !== 'EXPLORATION';
 
   if (!visible) return null;
 
@@ -130,14 +318,6 @@ export default function CombatHUD({
         </ScrollView>
       )}
 
-      {/* Enemy HP bars */}
-      {activeEnemies.length > 0 && (
-        <View style={styles.enemyList}>
-          {activeEnemies.map(enemy => (
-            <EnemyRow key={enemy.id} enemy={enemy} />
-          ))}
-        </View>
-      )}
 
       {/* Player conditions */}
       {playerConditions?.length > 0 && (

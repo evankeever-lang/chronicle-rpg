@@ -164,10 +164,14 @@ function DieFace({ shape, size: S, color }) {
 export default function DiceRoller({
   visible,
   onRollComplete,
-  requiredRoll,     // { skill, dc, ability } — always set when visible from game
+  requiredRoll,     // { skill, dc, ability } — set for skill checks
   character,
   isPeeking,        // whether the user has minimised to peek at DM text
   onPeekToggle,     // toggle peek mode
+  rollContext,        // plain label for combat rolls ("Roll for Initiative", "Attack Roll", etc.)
+  requiredSides,      // override die sides (e.g. 8 for d8 damage roll); defaults to requiredRoll?.sides or 20
+  hasAdvantage = false,    // show Advantage button (only when a condition/ability grants it)
+  hasDisadvantage = false, // show Disadvantage button (only when a condition/ability grants it)
 }) {
   const [result, setResult] = useState(null);
   const [isRolling, setIsRolling] = useState(false);
@@ -185,7 +189,7 @@ export default function DiceRoller({
     }).start();
   }, [visible]);
 
-  // Reset when shown
+  // Reset when shown or when rollContext changes (e.g. attack → damage phase)
   useEffect(() => {
     if (visible) {
       setResult(null);
@@ -193,9 +197,9 @@ export default function DiceRoller({
       setDisadvantage(false);
       resultAnim.setValue(0);
     }
-  }, [visible]);
+  }, [visible, rollContext]);
 
-  const sides = requiredRoll?.sides || 20;
+  const sides = requiredSides || requiredRoll?.sides || 20;
 
   const getModifier = useCallback(() => {
     if (!character || !requiredRoll) return 0;
@@ -275,7 +279,7 @@ export default function DiceRoller({
       <Animated.View style={[styles.peekBar, { transform: [{ translateY: slideY }] }]}>
         <TouchableOpacity style={styles.peekBarInner} onPress={onPeekToggle}>
           <Text style={styles.peekBarText}>
-            🎲 {requiredRoll?.skill} Check · DC {requiredRoll?.dc} — tap to roll
+            🎲 {requiredRoll ? `${requiredRoll.skill} Check · DC ${requiredRoll.dc}` : (rollContext || 'Roll')} — tap to roll
           </Text>
           <Text style={styles.peekArrow}>↑</Text>
         </TouchableOpacity>
@@ -288,13 +292,20 @@ export default function DiceRoller({
     <View style={styles.backdrop}>
       <Animated.View style={[styles.sheet, { transform: [{ translateY: slideY }] }]}>
 
+        {/* Handle */}
+        <View style={styles.handle} />
+
         {/* Peek button — collapse to see DM text */}
         <TouchableOpacity style={styles.peekButton} onPress={onPeekToggle}>
           <Text style={styles.peekButtonText}>Read prompt ↓</Text>
         </TouchableOpacity>
 
-        {/* Handle */}
-        <View style={styles.handle} />
+        {/* Header — context label for combat rolls */}
+        {rollContext && !requiredRoll && (
+          <View style={styles.header}>
+            <Text style={styles.checkType}>{rollContext}</Text>
+          </View>
+        )}
 
         {/* Header — skill check info */}
         {requiredRoll && (
@@ -323,21 +334,27 @@ export default function DiceRoller({
           <Die3D sides={sides} rolling={isRolling} result={result?.die} />
         </View>
 
-        {/* Advantage / Disadvantage */}
-        <View style={styles.advRow}>
-          <TouchableOpacity
-            style={[styles.advBtn, advantage && styles.advBtnGreen]}
-            onPress={() => { setAdvantage(a => !a); setDisadvantage(false); setResult(null); }}
-          >
-            <Text style={[styles.advText, advantage && { color: COLORS.success }]}>Advantage</Text>
-          </TouchableOpacity>
-          <TouchableOpacity
-            style={[styles.advBtn, disadvantage && styles.advBtnRed]}
-            onPress={() => { setDisadvantage(d => !d); setAdvantage(false); setResult(null); }}
-          >
-            <Text style={[styles.advText, disadvantage && { color: COLORS.diceFumble }]}>Disadvantage</Text>
-          </TouchableOpacity>
-        </View>
+        {/* Advantage / Disadvantage — only shown when a condition or ability grants one */}
+        {(hasAdvantage || hasDisadvantage) && (
+          <View style={styles.advRow}>
+            {hasAdvantage && (
+              <TouchableOpacity
+                style={[styles.advBtn, advantage && styles.advBtnGreen]}
+                onPress={() => { setAdvantage(a => !a); setDisadvantage(false); setResult(null); }}
+              >
+                <Text style={[styles.advText, advantage && { color: COLORS.success }]}>Advantage</Text>
+              </TouchableOpacity>
+            )}
+            {hasDisadvantage && (
+              <TouchableOpacity
+                style={[styles.advBtn, disadvantage && styles.advBtnRed]}
+                onPress={() => { setDisadvantage(d => !d); setAdvantage(false); setResult(null); }}
+              >
+                <Text style={[styles.advText, disadvantage && { color: COLORS.diceFumble }]}>Disadvantage</Text>
+              </TouchableOpacity>
+            )}
+          </View>
+        )}
 
         {/* Result area */}
         {result && (
@@ -398,7 +415,8 @@ const styles = StyleSheet.create({
   },
 
   peekButton: {
-    position: 'absolute', top: 14, right: SPACING.lg,
+    alignSelf: 'flex-end',
+    marginBottom: SPACING.sm,
     backgroundColor: COLORS.surfaceElevated,
     borderRadius: RADIUS.pill, paddingHorizontal: 12, paddingVertical: 5,
     borderWidth: 1, borderColor: COLORS.border,

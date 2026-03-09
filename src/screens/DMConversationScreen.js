@@ -13,7 +13,7 @@ import { getTutorialBeatInjection } from '../constants/campaigns';
 import DMMessage from '../components/DMMessage';
 import DiceRoller from '../components/DiceRoller';
 import ChronicleCard from '../components/ChronicleCard';
-import CombatHUD from '../components/CombatHUD';
+import CombatHUD, { EnemyZone, CombatLogStrip } from '../components/CombatHUD';
 import {
   rollInitiative, initializeEnemies, resolveAttack, rollDamage,
   rollDeathSave, buildCombatSummary, formatPlayerAttack, formatEnemyTurn, getPlayerCombatProfile,
@@ -161,9 +161,17 @@ export default function DMConversationScreen({ navigation }) {
     const enemies = initializeEnemies(enemyList);
     initCombat(enemies); // → COMBAT_INIT state
 
-    // Show dice roller for player's initiative roll — enemies auto-roll after
+    // Show combat announcement — player taps "Roll for Initiative" to open the dice roller
+    addMessage({
+      id: `combat_start_${Date.now()}`,
+      role: 'assistant',
+      content: { system_text: '⚔️ Combat begins! Prepare yourself.' },
+      personaName: selectedPersona?.name,
+      personaEmoji: selectedPersona?.emoji,
+      timestamp: Date.now(),
+    });
     setPendingCombatRoll({ type: 'initiative', enemies });
-    setDiceVisible(true);
+    setWaitingForInitiative(true);
     Haptics.notificationAsync(Haptics.NotificationFeedbackType.Warning);
   };
 
@@ -204,7 +212,8 @@ export default function DMConversationScreen({ navigation }) {
     });
   };
 
-  const handleAttackRoll = async (rollResult, targetEnemy) => {
+  // Phase 1: d20 attack roll — determines hit/miss/crit, then opens damage roller on hit
+  const handleAttackPhase1 = (rollResult, targetEnemy) => {
     const profile = getPlayerCombatProfile(character);
     const dieRoll = rollResult.die;
     const isCrit = dieRoll === 20;
@@ -212,33 +221,75 @@ export default function DMConversationScreen({ navigation }) {
     const total = dieRoll + profile.attackBonus;
     const hit = isCrit || (!isFumble && total >= targetEnemy.ac);
 
-    let damage = 0;
-    let newEnemyHp = targetEnemy.hp;
-    let updatedEnemies = [...activeEnemies];
-
-    if (hit) {
-      const dmgResult = rollDamage(profile.damageDice, isCrit);
-      damage = Math.max(1, dmgResult.total + profile.damageMod);
-      newEnemyHp = Math.max(0, targetEnemy.hp - damage);
-      applyEnemyDamage(targetEnemy.id, damage);
-      updatedEnemies = activeEnemies.map(e =>
-        e.id === targetEnemy.id ? { ...e, hp: newEnemyHp } : e
-      );
-      if (isCrit) Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
+    if (!hit) {
+      // Miss — close roller, log, end player turn
+      setDiceVisible(false);
+      const missText = isFumble
+        ? `Fumble! Miss on ${targetEnemy.name}. (Roll: 1)`
+        : `Missed ${targetEnemy.name}. (Roll: ${dieRoll}+${profile.attackBonus}=${total} vs AC ${targetEnemy.ac})`;
+      addMessage({
+        id: `player_attack_${Date.now()}`,
+        role: 'assistant',
+        content: { system_text: missText },
+        personaName: selectedPersona?.name,
+        personaEmoji: selectedPersona?.emoji,
+        timestamp: Date.now(),
+      });
+      setCombatPanelMode(null);
+      advanceTurn();
+      return;
     }
 
-    const logText = isCrit
-      ? `CRITICAL HIT on ${targetEnemy.name}! Dealt ${damage} damage. [${targetEnemy.name}: ${newEnemyHp}/${targetEnemy.maxHp} HP]`
-      : isFumble
-      ? `Fumble — miss on ${targetEnemy.name}. (Roll: 1)`
-      : hit
-      ? `You strike ${targetEnemy.name} for ${damage} damage. (Roll: ${dieRoll}+${profile.attackBonus}=${total} vs AC ${targetEnemy.ac}) [${targetEnemy.name}: ${newEnemyHp}/${targetEnemy.maxHp} HP]`
-      : `Missed ${targetEnemy.name}. (Roll: ${dieRoll}+${profile.attackBonus}=${total} vs AC ${targetEnemy.ac})`;
+    // Hit — show hit message then open damage roller
+    if (isCrit) Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
+    const hitText = isCrit
+      ? `CRITICAL HIT on ${targetEnemy.name}! (Roll: 20) Now roll damage — dice are doubled!`
+      : `Hit! (Roll: ${dieRoll}+${profile.attackBonus}=${total} vs AC ${targetEnemy.ac}) Now roll damage.`;
+    addMessage({
+      id: `player_attack_hit_${Date.now()}`,
+      role: 'assistant',
+      content: { system_text: hitText },
+      personaName: selectedPersona?.name,
+      personaEmoji: selectedPersona?.emoji,
+      timestamp: Date.now(),
+    });
+
+    // Parse weapon die sides for damage roller (e.g. '1d6' → 6)
+    const diceMatch = profile.damageDice.match(/d(\d+)/i);
+    const damageSides = diceMatch ? parseInt(diceMatch[1], 10) : 6;
+
+    // Transition to phase 2: damage roll
+    setPendingCombatRoll({
+      type: 'damage',
+      targetEnemy,
+      attackResult: { isCrit, isFumble: false, roll: dieRoll, total, attackBonus: profile.attackBonus },
+      damageSides,
+      damageMod: profile.damageMod,
+      damageDice: profile.damageDice,
+    });
+    // diceVisible stays true — DiceRoller re-renders with new context + sides
+  };
+
+  // Phase 2: weapon damage roll — applies damage after a confirmed hit
+  const handleAttackPhase2 = async (rollResult, targetEnemy, attackResult, damageMod, damageDice, isCrit) => {
+    // Critical hit doubles the die result (simplest 5e-equivalent for single-die weapons)
+    const rawDamage = isCrit ? rollResult.die * 2 : rollResult.die;
+    const damage = Math.max(1, rawDamage + damageMod);
+
+    const newEnemyHp = Math.max(0, targetEnemy.hp - damage);
+    applyEnemyDamage(targetEnemy.id, damage);
+    const updatedEnemies = activeEnemies.map(e =>
+      e.id === targetEnemy.id ? { ...e, hp: newEnemyHp } : e
+    );
+
+    const damageText = isCrit
+      ? `CRITICAL HIT deals ${damage} damage to ${targetEnemy.name}! (${rollResult.die}×2${damageMod !== 0 ? `${damageMod >= 0 ? '+' : ''}${damageMod}` : ''}) [${targetEnemy.name}: ${newEnemyHp}/${targetEnemy.maxHp} HP]`
+      : `You deal ${damage} damage to ${targetEnemy.name}. (Roll: ${rollResult.die}${damageMod !== 0 ? `${damageMod >= 0 ? '+' : ''}${damageMod}` : ''}) [${targetEnemy.name}: ${newEnemyHp}/${targetEnemy.maxHp} HP]`;
 
     addMessage({
-      id: `player_attack_${Date.now()}`,
+      id: `player_damage_${Date.now()}`,
       role: 'assistant',
-      content: { system_text: logText },
+      content: { system_text: damageText },
       personaName: selectedPersona?.name,
       personaEmoji: selectedPersona?.emoji,
       timestamp: Date.now(),
@@ -351,10 +402,23 @@ export default function DMConversationScreen({ navigation }) {
   };
 
   // Called with locally-updated enemy list. Makes exactly 1 API call for the outro.
-  const checkCombatEnd = async (updatedEnemies, force = false) => {
+  const checkCombatEnd = async (updatedEnemies, force = false, outcome = null) => {
     if (!force && !updatedEnemies.every(e => e.hp <= 0)) return;
 
     endCombat(); // → COMBAT_RESOLUTION (hides action panel)
+
+    // Client-generated banner — persists in local state so it survives resetCombat()
+    const outcomeLabel = outcome || (updatedEnemies.every(e => e.hp <= 0) ? 'Victory' : 'Combat Ended');
+    const bannerText = `⚔️ COMBAT ENDED — ${outcomeLabel}`;
+    addMessage({
+      id: `combat_end_${Date.now()}`,
+      role: 'assistant',
+      content: { system_text: bannerText },
+      personaName: selectedPersona?.name,
+      personaEmoji: selectedPersona?.emoji,
+      timestamp: Date.now(),
+    });
+    setCombatEndBanner(bannerText);
 
     const summary = buildCombatSummary({
       enemies: updatedEnemies,
@@ -401,6 +465,8 @@ export default function DMConversationScreen({ navigation }) {
   const [combatPanelMode, setCombatPanelMode] = useState(null); // null | 'attack'
   const [customCombatText, setCustomCombatText] = useState('');
   const [pendingCombatRoll, setPendingCombatRoll] = useState(null); // null | { type: 'initiative', enemies } | { type: 'attack', targetEnemy }
+  const [waitingForInitiative, setWaitingForInitiative] = useState(false);
+  const [combatEndBanner, setCombatEndBanner] = useState(null);
 
   // ── Player-turn message counter (only counts what player sends) ─────────────
   const playerTurnCount = useRef(0);
@@ -516,6 +582,7 @@ export default function DMConversationScreen({ navigation }) {
 
     if (!isCombatInternal) playerTurnCount.current += 1;
     const hitLimit = !isCombatInternal && playerTurnCount.current >= FREE_PLAYER_TURNS;
+    if (combatEndBanner) setCombatEndBanner(null);
 
     const userMsg = {
       id: `user_${Date.now()}`, role: 'user',
@@ -598,39 +665,68 @@ export default function DMConversationScreen({ navigation }) {
       handleCombatStart, handleEnemyAction, resetCombat, setTone, setSceneTag]);
 
   const handleRollComplete = useCallback((rollResult) => {
-    setDiceVisible(false);
     setIsPeeking(false);
     Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Heavy);
 
     // Route combat rolls — no API call, handled client-side
     if (pendingCombatRoll?.type === 'initiative') {
+      setDiceVisible(false);
       handleInitiativeRoll(rollResult, pendingCombatRoll.enemies);
       setPendingCombatRoll(null);
       return;
     }
     if (pendingCombatRoll?.type === 'attack') {
-      handleAttackRoll(rollResult, pendingCombatRoll.targetEnemy);
+      // Do NOT close the roller here — handleAttackPhase1 decides:
+      //   miss → closes roller itself; hit → keeps roller open for damage phase
+      const { targetEnemy } = pendingCombatRoll;
+      setPendingCombatRoll(null); // phase1 will re-set to 'damage' on hit
+      handleAttackPhase1(rollResult, targetEnemy);
+      return;
+    }
+    if (pendingCombatRoll?.type === 'damage') {
+      setDiceVisible(false);
+      const { targetEnemy, attackResult, damageMod, damageDice } = pendingCombatRoll;
+      const isCrit = attackResult?.isCrit ?? false;
       setPendingCombatRoll(null);
+      handleAttackPhase2(rollResult, targetEnemy, attackResult, damageMod ?? 0, damageDice, isCrit);
       return;
     }
 
-    // Regular skill check → send to DM
+    // Regular skill check → close roller and send to DM
+    setDiceVisible(false);
     const mod = rollResult.modifier || 0;
     const rollText = pendingRoll
       ? `I rolled a ${rollResult.die} for my ${pendingRoll.skill} check. With my modifier of ${mod >= 0 ? '+' + mod : mod}, my total is ${rollResult.total}.${rollResult.isCrit ? ' Natural 20!' : rollResult.isFumble ? ' Natural 1.' : ''} ${rollResult.success !== null ? (rollResult.success ? 'I succeeded.' : 'I failed.') : ''}`
       : `I rolled a ${rollResult.die} on the d${rollResult.sides}.`;
     setPendingRoll(null);
     sendMessage(rollText);
-  }, [pendingRoll, pendingCombatRoll, sendMessage, handleInitiativeRoll, handleAttackRoll]);
+  }, [pendingRoll, pendingCombatRoll, sendMessage, handleInitiativeRoll, handleAttackPhase1, handleAttackPhase2]);
 
   const handleQuickAction = (action) => sendMessage(action);
 
   const lastDMMessage = [...(messages || [])].reverse().find(m => m.role === 'assistant');
   const lastPlayerMessage = [...(messages || [])].reverse().find(m => m.role === 'user' && m.displayText)?.displayText || null;
   const suggestedActions = lastDMMessage?.content?.suggested_actions || [];
+  // Last N system_text messages for the combat log strip
+  const combatSystemMessages = (messages || [])
+    .filter(m => m.role === 'assistant' && m.content?.system_text)
+    .slice(-5);
 
   const activeCombatant = combatTurnOrder[activeTurnIndex];
   const isPlayerTurn = activeCombatant?.isPlayer === true;
+
+  // Derive advantage/disadvantage for dice roller from active conditions
+  const playerCombatant = combatTurnOrder.find(c => c.isPlayer);
+  const activeConditions = [
+    ...(playerCombatant?.conditions || []),
+    ...(character?.conditions || []),
+  ];
+  const rollHasAdvantage = activeConditions.some(c =>
+    ['Advantage', 'Blessed', 'Helped', 'Reckless Attack'].includes(c)
+  );
+  const rollHasDisadvantage = activeConditions.some(c =>
+    ['Disadvantage', 'Poisoned', 'Frightened', 'Prone', 'Exhaustion', 'Restrained'].includes(c)
+  );
 
   const hpColor = getHpColor(character?.currentHP ?? 1, character?.maxHP ?? 1);
   const hpPct = character?.maxHP > 0 ? (character.currentHP ?? 0) / character.maxHP : 1;
@@ -668,7 +764,6 @@ export default function DMConversationScreen({ navigation }) {
         combatState={combatState}
         combatTurnOrder={combatTurnOrder}
         activeTurnIndex={activeTurnIndex}
-        activeEnemies={activeEnemies}
         combatRound={combatRound}
         playerConditions={character?.conditions}
       />
@@ -686,61 +781,98 @@ export default function DMConversationScreen({ navigation }) {
         style={{ flex: 1 }}
         keyboardVerticalOffset={0}
       >
-        {/* Current DM response — scrollable if long */}
-        <ScrollView
-          style={styles.storyArea}
-          contentContainerStyle={styles.storyContent}
-          showsVerticalScrollIndicator={false}
-          keyboardDismissMode="interactive"
-        >
-          {/* Campaign bar */}
-          <View style={styles.campaignBar}>
-            <Text style={styles.campaignBarTitle}>
-              {selectedCampaign?.emoji}  {selectedCampaign?.title}
-            </Text>
-            <TouchableOpacity onPress={() => setHistoryVisible(true)} style={styles.historyBtn}>
-              <Text style={styles.historyBtnText}>History</Text>
-            </TouchableOpacity>
-          </View>
-
-          {/* Player's last visible action */}
-          {lastPlayerMessage && (
-            <View style={styles.playerEcho}>
-              <Text style={styles.playerEchoLabel}>You</Text>
-              <Text style={styles.playerEchoText} numberOfLines={2}>{lastPlayerMessage}</Text>
-            </View>
-          )}
-
-          {/* Loading / current DM response */}
-          {isLoading ? (
-            <Animated.View style={[styles.typingRow, { opacity: typingAnim }]}>
-              <Text style={styles.typingEmoji}>{selectedPersona?.emoji || '📜'}</Text>
-              <View style={styles.typingBubble}>
-                <Text style={styles.typingLabel}>
-                  {PERSONA_TYPING[selectedPersona?.id] || 'The tale unfolds…'}
-                </Text>
+        {/* ── Battlefield layout (COMBAT_STATE only) ── */}
+        {combatState === 'COMBAT_STATE' ? (
+          <View style={styles.combatBattlefield}>
+            <EnemyZone
+              activeEnemies={activeEnemies}
+              isAttacking={combatPanelMode === 'attack'}
+              onSelectEnemy={(enemy) => {
+                handleCombatAttack(enemy);
+                setCombatPanelMode(null);
+              }}
+            />
+            <CombatLogStrip messages={combatSystemMessages} />
+            {lastDMMessage?.content?.narration && (
+              <View style={styles.combatNarrationBlock}>
+                <DMMessage message={lastDMMessage} />
               </View>
-            </Animated.View>
-          ) : lastDMMessage ? (
-            <DMMessage message={lastDMMessage} />
-          ) : null}
-
-          {isAtLimit && !isGeneratingSummary && !chronicleVisible && (
-            <View style={styles.sessionEndNote}>
-              <Text style={styles.sessionEndText}>Session complete — your Chronicle is being written…</Text>
-            </View>
-          )}
-        </ScrollView>
-
-        {/* ── Suggested actions ── */}
-        {suggestedActions.length > 0 && !isLoading && !isAtLimit && !diceVisible && (
-          <View style={styles.actionsContainer}>
-            {suggestedActions.map((action, i) => (
-              <TouchableOpacity key={i} style={styles.actionChip} onPress={() => handleQuickAction(action)}>
-                <Text style={styles.actionChipText}>{action}</Text>
-              </TouchableOpacity>
-            ))}
+            )}
           </View>
+        ) : (
+          <>
+            {/* Current DM response — scrollable if long */}
+            <ScrollView
+              style={styles.storyArea}
+              contentContainerStyle={styles.storyContent}
+              showsVerticalScrollIndicator={false}
+              keyboardDismissMode="interactive"
+            >
+              {/* Campaign bar */}
+              <View style={styles.campaignBar}>
+                <Text style={styles.campaignBarTitle}>
+                  {selectedCampaign?.emoji}  {selectedCampaign?.title}
+                </Text>
+                <TouchableOpacity onPress={() => setHistoryVisible(true)} style={styles.historyBtn}>
+                  <Text style={styles.historyBtnText}>History</Text>
+                </TouchableOpacity>
+              </View>
+
+              {/* Player's last visible action */}
+              {lastPlayerMessage && (
+                <View style={styles.playerEcho}>
+                  <Text style={styles.playerEchoLabel}>You</Text>
+                  <Text style={styles.playerEchoText} numberOfLines={2}>{lastPlayerMessage}</Text>
+                </View>
+              )}
+
+              {/* Loading / current DM response */}
+              {isLoading ? (
+                <Animated.View style={[styles.typingRow, { opacity: typingAnim }]}>
+                  <Text style={styles.typingEmoji}>{selectedPersona?.emoji || '📜'}</Text>
+                  <View style={styles.typingBubble}>
+                    <Text style={styles.typingLabel}>
+                      {PERSONA_TYPING[selectedPersona?.id] || 'The tale unfolds…'}
+                    </Text>
+                  </View>
+                </Animated.View>
+              ) : lastDMMessage ? (
+                <>
+                  {combatEndBanner && (
+                    <DMMessage message={{ id: 'combat_end_banner', role: 'assistant', content: { system_text: combatEndBanner } }} />
+                  )}
+                  <DMMessage message={lastDMMessage} />
+                </>
+              ) : null}
+
+              {isAtLimit && !isGeneratingSummary && !chronicleVisible && (
+                <View style={styles.sessionEndNote}>
+                  <Text style={styles.sessionEndText}>Session complete — your Chronicle is being written…</Text>
+                </View>
+              )}
+            </ScrollView>
+
+            {/* ── Suggested actions (hidden during COMBAT_STATE) ── */}
+            {suggestedActions.length > 0 && !isLoading && !isAtLimit && !diceVisible && (
+              <View style={styles.actionsContainer}>
+                {suggestedActions.map((action, i) => (
+                  <TouchableOpacity key={i} style={styles.actionChip} onPress={() => handleQuickAction(action)}>
+                    <Text style={styles.actionChipText}>{action}</Text>
+                  </TouchableOpacity>
+                ))}
+              </View>
+            )}
+          </>
+        )}
+
+        {/* ── Initiative prompt (gate before dice roller opens) ── */}
+        {combatState === 'COMBAT_INIT' && waitingForInitiative && (
+          <TouchableOpacity
+            style={styles.initiativePromptBtn}
+            onPress={() => { setWaitingForInitiative(false); setDiceVisible(true); }}
+          >
+            <Text style={styles.initiativePromptText}>Roll for Initiative →</Text>
+          </TouchableOpacity>
         )}
 
         {/* ── Death save UI (replaces input bar when DOWNED) ── */}
@@ -806,36 +938,22 @@ export default function DMConversationScreen({ navigation }) {
                   Resolve {activeCombatant?.name}'s turn →
                 </Text>
               </TouchableOpacity>
-            ) : combatPanelMode === 'attack' ? (
-              <View>
-                <View style={styles.combatPanelHeader}>
-                  <Text style={styles.combatPanelLabel}>Choose target</Text>
-                  <TouchableOpacity onPress={() => setCombatPanelMode(null)}>
-                    <Text style={styles.combatCancelText}>← Back</Text>
-                  </TouchableOpacity>
-                </View>
-                <View style={styles.combatTargetRow}>
-                  {activeEnemies.filter(e => e.hp > 0).map(enemy => {
-                    const profile = getPlayerCombatProfile(character);
-                    return (
-                      <TouchableOpacity
-                        key={enemy.id}
-                        style={styles.combatTargetBtn}
-                        onPress={() => handleCombatAttack(enemy)}
-                        disabled={isLoading}
-                      >
-                        <Text style={styles.combatTargetName}>{enemy.name}</Text>
-                        <Text style={styles.combatTargetSub}>AC {enemy.ac} · {enemy.hp}/{enemy.maxHp} HP</Text>
-                        <Text style={styles.combatTargetDice}>{profile.damageDice} {formatMod(profile.damageMod)}</Text>
-                      </TouchableOpacity>
-                    );
-                  })}
-                </View>
-              </View>
             ) : (
               <>
+                {combatPanelMode === 'attack' && (
+                  <View style={styles.attackModeBar}>
+                    <Text style={styles.attackModeLabel}>↑ Tap a target above</Text>
+                    <TouchableOpacity onPress={() => setCombatPanelMode(null)}>
+                      <Text style={styles.attackModeCancel}>Cancel</Text>
+                    </TouchableOpacity>
+                  </View>
+                )}
                 <View style={styles.combatPanelRow}>
-                  <TouchableOpacity style={styles.combatActionBtn} onPress={() => setCombatPanelMode('attack')} disabled={isLoading}>
+                  <TouchableOpacity
+                    style={[styles.combatActionBtn, combatPanelMode === 'attack' && styles.combatActionBtnActive]}
+                    onPress={() => setCombatPanelMode(combatPanelMode === 'attack' ? null : 'attack')}
+                    disabled={isLoading}
+                  >
                     <Text style={styles.combatActionIcon}>⚔️</Text>
                     <Text style={styles.combatActionLabel}>Attack</Text>
                   </TouchableOpacity>
@@ -892,8 +1010,7 @@ export default function DMConversationScreen({ navigation }) {
                     onPress={() => Alert.alert('Flee?', 'Attempt to disengage and flee combat?', [
                       { text: 'Stay', style: 'cancel' },
                       { text: 'Flee', onPress: () => {
-                        addMessage({ id: `combat_${Date.now()}`, role: 'assistant', content: { system_text: `${character?.name || 'You'} disengages and flees from combat.` }, personaName: selectedPersona?.name, personaEmoji: selectedPersona?.emoji, timestamp: Date.now() });
-                        checkCombatEnd(activeEnemies, true);
+                        checkCombatEnd(activeEnemies, true, 'You Fled');
                       }},
                     ])}
                     disabled={isLoading}
@@ -908,7 +1025,7 @@ export default function DMConversationScreen({ navigation }) {
         )}
 
         {/* ── Input bar ── */}
-        {!diceVisible && !isAtLimit && combatState !== 'DOWNED' && combatState !== 'COMBAT_STATE' && (
+        {!diceVisible && !isAtLimit && combatState !== 'DOWNED' && combatState !== 'COMBAT_STATE' && combatState !== 'COMBAT_INIT' && (
           <View style={styles.inputBar}>
             <TextInput
               style={styles.input}
@@ -967,6 +1084,16 @@ export default function DMConversationScreen({ navigation }) {
           character={character}
           isPeeking={isPeeking}
           onPeekToggle={() => setIsPeeking(p => !p)}
+          rollContext={
+            pendingCombatRoll?.type === 'initiative' ? 'Roll for Initiative'
+            : pendingCombatRoll?.type === 'attack' ? 'Attack Roll'
+            : pendingCombatRoll?.type === 'damage' ? `Damage Roll — ${pendingCombatRoll?.targetEnemy?.name}`
+            : pendingRoll?.skill ? `${pendingRoll.skill} Check`
+            : null
+          }
+          requiredSides={pendingCombatRoll?.type === 'damage' ? pendingCombatRoll?.damageSides : undefined}
+          hasAdvantage={rollHasAdvantage}
+          hasDisadvantage={rollHasDisadvantage}
         />
       )}
 
@@ -1211,24 +1338,26 @@ const styles = StyleSheet.create({
     fontWeight: '700',
     letterSpacing: 0.3,
   },
-  combatPanelHeader: {
+  attackModeBar: {
     flexDirection: 'row',
     alignItems: 'center',
     justifyContent: 'space-between',
-    marginBottom: SPACING.xs,
     paddingHorizontal: SPACING.xs,
+    paddingBottom: SPACING.xs,
   },
-  combatPanelLabel: {
-    color: COLORS.textMuted,
+  attackModeLabel: {
+    color: COLORS.accentDanger,
     fontSize: FONT_SIZES.xs,
-    textTransform: 'uppercase',
-    letterSpacing: 1,
     fontWeight: '700',
   },
-  combatCancelText: {
+  attackModeCancel: {
     color: COLORS.primary,
     fontSize: FONT_SIZES.sm,
     fontWeight: '600',
+  },
+  combatActionBtnActive: {
+    borderColor: COLORS.accentDanger,
+    backgroundColor: COLORS.accentDanger + '22',
   },
   combatPanelRow: {
     flexDirection: 'row',
@@ -1275,36 +1404,6 @@ const styles = StyleSheet.create({
   combatActionLabelDisabled: {
     opacity: 0.5,
   },
-  combatTargetRow: {
-    flexDirection: 'row',
-    gap: SPACING.xs,
-    flexWrap: 'wrap',
-  },
-  combatTargetBtn: {
-    flex: 1,
-    minWidth: 80,
-    backgroundColor: COLORS.surfaceElevated,
-    borderRadius: RADIUS.md,
-    borderWidth: 1,
-    borderColor: COLORS.accentDanger + '66',
-    padding: SPACING.sm,
-    alignItems: 'center',
-    gap: 2,
-  },
-  combatTargetName: {
-    color: COLORS.textPrimary,
-    fontSize: FONT_SIZES.sm,
-    fontWeight: '700',
-  },
-  combatTargetSub: {
-    color: COLORS.textMuted,
-    fontSize: 10,
-  },
-  combatTargetDice: {
-    color: COLORS.primary,
-    fontSize: 10,
-    fontWeight: '700',
-  },
   combatCustomBtn: {
     alignItems: 'center',
     paddingVertical: SPACING.xs,
@@ -1322,4 +1421,14 @@ const styles = StyleSheet.create({
   lootItem: { color: COLORS.textPrimary, fontSize: 15, marginBottom: SPACING.xs },
   lootGold: { color: COLORS.primaryLight, fontSize: 14, marginTop: SPACING.xs },
   lootDismiss: { color: COLORS.textMuted, fontSize: 12, marginTop: SPACING.md, fontStyle: 'italic' },
+
+  // ── Combat battlefield layout ─────────────────────────────────────────────────
+  combatBattlefield: {
+    flex: 1,
+    flexDirection: 'column',
+  },
+  combatNarrationBlock: {
+    paddingHorizontal: SPACING.md,
+    paddingTop: SPACING.sm,
+  },
 });

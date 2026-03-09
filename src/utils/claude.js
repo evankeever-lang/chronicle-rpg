@@ -91,8 +91,13 @@ Enemy format: { "name": "Goblin Scout", "hp": 7, "maxHp": 7, "ac": 13, "attackBo
 Use DnD-appropriate stats for the enemy type and threat level. HP 5–15 for weak enemies, 15–40 for mid, 40+ for boss.
 Set tone to combat_light, combat_heavy, or boss.
 
-### Ending combat
-Set combat_end: true when all enemies are defeated, fled, or surrendered. Do NOT set enemies when ending.
+### Ending combat — CRITICAL
+Set combat_end: true when combat concludes for ANY reason:
+- All enemies reach 0 HP (killed or defeated)
+- Enemy flees, surrenders, gives up, or backs down
+- Player flees (Disengage/Flee action)
+- Any other non-violent or narrative resolution
+If combat_end: true is missing, the app stays locked in combat permanently and the player cannot continue. This field MUST be set on every combat exit. Do NOT set the enemies array when ending.
 
 ### Enemy retaliation during combat
 Set enemy_action when narrating an enemy's attack: { "name": "Enemy Name", "attack_roll_hint": "10", "damage_hint": "1d6" }
