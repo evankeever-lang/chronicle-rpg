@@ -27,7 +27,7 @@ Core game loop is working end-to-end on iOS:
 
 ### Build Now 🔨 In Progress
 Six workstreams to reach soft-launch readiness. Build in this order:
-1. **Combat state machine** — highest trust item, everything depends on this being correct
+1. **Combat state machine** 🔨 — initial implementation done, now in refinement sprint (see Combat Refinement Sprint section below)
 2. **World registry & name seeding** — data architecture, no UI, low risk
 3. **Tutorial beat finalisation** — refine existing + wire to new combat system
 4. **Music system** — self-contained once tone field exists in DM JSON
@@ -191,6 +191,97 @@ These render instantly with no API call. Use for all NPC/ally turns:
 | Custom player action (fallback) | AI (targeted) | ✅ Yes (rare) |
 
 Target: a 3-round combat encounter costs 3–4 AI calls total, not 3–4 per round.
+
+---
+
+### Combat Refinement Sprint — Current Bugs & Next Features
+
+This section captures the exact known issues and prioritised additions for the active combat refinement pass. Work through these in order.
+
+#### 🐛 Bugs to Fix
+
+**1. Combat not ending on flee/surrender**
+The tutorial goblin encounter ends with Mik giving up, but `combat_end: true` is never fired, so the state machine stays in `COMBAT_STATE`. Fix requires two things:
+- DM system prompt must explicitly state: `combat_end: true` must be set whenever combat concludes for ANY reason — enemy death, enemy flee, enemy surrender, player flee. Not just on kill.
+- Client must show a dedicated system message when `COMBAT_RESOLUTION` is entered, BEFORE any AI narration renders:
+  ```
+  ⚔️ COMBAT ENDED — Victory    (or "Enemy Fled" / "You Fled" / "Defeated")
+  ```
+  This is a client-generated system message, not AI text. The AI's post-combat narration follows after.
+- No AI narrative message should render until `combatState === 'COMBAT_RESOLUTION'` is confirmed.
+
+**2. CombatHUD disappears after first player action**
+The HUD unmounts when the message list re-renders after the player submits an action. The HUD must be mounted at `COMBAT_INIT` and must NOT unmount until `COMBAT_RESOLUTION`. It is a persistent sticky header, not a conditional render tied to message state.
+
+#### 🎲 Dice Roller Improvements
+
+**Context labels on the roller popup**
+Every dice roll invocation must pass a `context` string that displays at the top of the roller:
+- `"Roll for Initiative"`
+- `"Attack Roll"` (player's attack vs enemy AC)
+- `"Damage Roll"` (weapon dice after a hit)
+- `"Spell Attack"`
+- `"Persuasion Check"` / `"Stealth Check"` / etc. (skill name from the triggering check)
+- `"Death Saving Throw"`
+
+The `DiceRoller` component must accept a `rollContext` prop and render it as a header label.
+
+**Advantage / Disadvantage — conditional display only**
+The advantage/disadvantage controls must be HIDDEN by default. They only appear when a condition, ability, or spell explicitly grants one. A `hasAdvantage` / `hasDisadvantage` boolean prop controls visibility. During combat, the active conditions in `combatTurnOrder` should auto-derive these props (e.g. Prone = melee attackers have advantage; Frightened = disadvantage on attacks).
+
+**Two-roll combat — attack then damage**
+Combat attacks must use two separate dice rolls, not one:
+1. **Attack Roll** — d20 + proficiency + ability mod vs. target AC → resolves to Hit / Miss / Critical Hit
+2. **Damage Roll** — weapon dice + ability mod — only rolls if attack hit; skipped entirely on miss
+
+Critical Hit (natural 20): damage dice are doubled before adding modifiers. Fire a distinct animation and the combat-start audio sting.
+Both rolls animate separately and sequentially. Players must see both to trust the math.
+
+The DiceRoller component or combat resolution logic in `dice.js` / `combat.js` must be updated to support this two-phase flow.
+
+#### ✅ Combat Features — Launch Priority
+
+These are the features a DnD or BG3 player would notice missing. Build in this order:
+
+**Must have at soft launch:**
+
+| Feature | What it does | Implementation note |
+|---|---|---|
+| Two-roll combat | Attack roll → damage roll (see above) | `dice.js` + `combat.js` |
+| Critical hits | Natural 20 = double damage dice | Flagged in attack roll result |
+| Conditions: Poisoned | Disadvantage on attack rolls and ability checks | Tracked in `combatTurnOrder[n].conditions[]` |
+| Conditions: Frightened | Disadvantage on attacks while source is visible | Same |
+| Conditions: Stunned | Can't act; attackers have advantage | Same |
+| Conditions: Prone | Disadvantage on attacks; melee attackers have advantage, ranged have disadvantage | Same |
+| Conditions visible in HUD | Active conditions shown as small badge icons on each combatant chip | CombatHUD.js |
+| Flee combat | Player can disengage and end combat (triggers COMBAT_RESOLUTION with flee outcome) | Combat Action Panel |
+| Death saving throws | 3-pip tracker at 0 HP, d20 client-side each turn | Already in spec — confirm implemented |
+
+**Strong candidates for launch (add if time allows):**
+
+| Feature | What it does | Notes |
+|---|---|---|
+| Bonus action slot | Separate from main action; Rogues, some spells use it | Adds a second action button in Combat Action Panel |
+| Opportunity attack | When enemy leaves melee range, trigger a reaction attack | Simplified: prompt player "Opportunity Attack?" when enemy flees |
+| Concentration | Only one concentration spell active; taking damage = CON save DC10 | Track `concentration` boolean on player state |
+
+**Phase 2 (post-launch):**
+Full conditions list (Blinded, Charmed, Deafened, Grappled, Incapacitated, Invisible, Paralyzed, Petrified, Restrained, Silenced), area-of-effect spells, multi-attack (Fighter level 5+), legendary actions, environmental hazards, Inspiration.
+
+#### 📐 Soft-Launch Readiness Bar for Combat
+Combat is launch-ready when:
+- [ ] State machine transitions are airtight — no broken states, no stuck transitions
+- [ ] `combat_end: true` fires on all exit conditions (kill, flee, surrender)
+- [ ] Dedicated "COMBAT ENDED" system message renders before any AI narration
+- [ ] CombatHUD persists for the entire combat encounter without disappearing
+- [ ] Two-roll attack flow (attack → damage) works with correct math
+- [ ] Critical hits double damage dice and trigger distinct feedback
+- [ ] Basic conditions (Poisoned, Frightened, Stunned, Prone) apply/remove correctly and show in HUD
+- [ ] Dice roller shows context labels and hides advantage/disadvantage unless triggered
+- [ ] Combat Action Panel replaces freeform text input during `COMBAT_STATE`
+- [ ] Player can flee combat cleanly
+
+---
 
 ### Pacing & Message Heartbeat Model
 **Rule: One API call per narrative beat. Not per player interaction.**
@@ -381,6 +472,13 @@ chronicle-rpg/
 - Strings containing apostrophes must use double quotes as wrapper in JS
 - `messages`, `sessionFlags`, `npcMemory` must have `= []` / `= {}` defaults in context destructure to prevent undefined spread crash on first render
 - `getHpColor` should be inlined in DMConversationScreen rather than imported from dice.js
+
+## Known Issues Active (Combat Refinement)
+- Combat does not end when enemy flees/surrenders — `combat_end: true` not firing from DM on non-kill exits
+- CombatHUD disappears after player submits first action (unmounting on message list re-render)
+- Dice roller shows no context label — player doesn't know what they're rolling for
+- Advantage/Disadvantage UI always visible, should be hidden unless a condition triggers it
+- Attack resolution is single-roll — needs to split into attack roll → damage roll two-phase flow
 
 ---
 
