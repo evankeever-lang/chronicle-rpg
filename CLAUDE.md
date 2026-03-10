@@ -273,12 +273,30 @@ The 7 required beats:
 | 1 | World Drop | 1 | DM voice established in 3 sentences. No mechanics. |
 | 2 | First Choice | 1–2 | Low-stakes binary. Establishes agency before mechanics. |
 | 3 | Skill Check intro | 2 | DM triggers. Tooltip fires once on first d20 only. |
-| 4 | **Mik Plant** ✅ | 1 | Message ~3–5. Spare or kill. Deliberately throwaway framing. |
-| 5 | Combat encounter | 1–2 | Full new state machine. Should feel satisfying, not punishing. |
-| 6 | **Mik Callback** ✅ | 1 | Via sessionFlag injection. Min 15 mins after plant. The viral moment. |
+| 4 | **Mik Plant** ✅ | 1 | Message ~3–5. Spare or kill. Deliberately throwaway framing. Mik exits scene immediately after. |
+| 5 | Combat encounter | 1–2 | Full new state machine. Mik is **not** in this fight. Should feel satisfying, not punishing. |
+| 6 | **Mik Callback** ✅ | 1 | Time-gated: minimum 10 minutes wall-clock after plant timestamp. The viral moment. |
 | 7 | Chronicle Card | 1 (Sonnet) | Auto-generated at arc end. Epithet reflects Mik choice. Share prompt fires. |
 
-**Mik mechanic:** Plant at beat 4, callback at beat ~12–14. `sessionFlags.tutorial_mik_fate` drives the DM injection — this is **not** reliant on context window memory. Callback is always reliable regardless of summarisation state. Spare path: grateful goblin spotted helping travelers. Kill path: young goblin looking for her father. Chronicle Card epithet should reflect the choice where possible ("The Merciful" / "The Relentless").
+**Mik mechanic — two critical design rules:**
+
+**Rule 1: Mik is not in the combat encounter.**
+The combat at Beat 5 is with a *different* enemy (the aggressive goblin, a guard, a creature — anything that isn't Mik). When the player spares Mik, he slinks away into the dark immediately. When the player kills Mik, he's gone. Either way, Mik must exit the scene before combat begins. If Mik is part of the combat encounter, the callback cannot surprise — the player just fought him. The plant-and-callback only works if Mik felt like a footnote, not a combatant.
+
+The `goblin_plant` beat injection must explicitly direct the DM to have Mik flee the scene after the spare/kill moment, before any combat trigger. The combat that follows should feel like a *separate* event.
+
+**Rule 2: Callback is time-gated, not message-gated.**
+The current implementation triggers the callback at a fixed message number (e.g. message 16). The problem: combat rounds don't increment `playerTurnCount`. A player can spend 5+ real minutes in combat — tapping through initiative, attack rolls, damage, NPC turns — while the message counter barely moves. The callback fires "too soon" in wall-clock time even when it fires "late" in message count.
+
+**Implementation:** Store `tutorial_mik_plant_timestamp` (Unix ms) in `sessionFlags` when Beat 4 fires. The callback beat resolver must check **both** conditions before firing:
+1. `playerTurnCount >= MIN_MESSAGES_AFTER_PLANT` (e.g. 4 narrative exchanges — enough to feel like story has moved on)
+2. `Date.now() - sessionFlags.tutorial_mik_plant_timestamp >= 10 * 60 * 1000` (10 minutes minimum)
+
+If either condition fails, the callback beat is skipped that turn and re-evaluated on every subsequent message until both pass. This means a fast reader gets the callback after 10 minutes; a slow player might get it at 15. Both feel right. Neither feels like the game "remembered" immediately.
+
+`sessionFlags.tutorial_mik_fate` drives the DM injection — this is **not** reliant on context window memory. Callback is always reliable regardless of summarisation state. Spare path: grateful goblin spotted helping travelers. Kill path: young goblin looking for her father. Chronicle Card epithet should reflect the choice where possible ("The Merciful" / "The Relentless").
+
+**Beat resolver change:** Replace `trigger_at_message: N` (fixed) with a new field `trigger_condition: fn(messageCount, sessionFlags, nowMs)` for time-sensitive beats. The resolver in `claude.js` evaluates the function instead of doing a simple equality check. Non-tutorial beats and non-time-sensitive beats keep using `trigger_at_message` unchanged.
 
 ### Rolling Summary — Context Window Management
 Two history tiers maintained at all times:

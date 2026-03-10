@@ -161,17 +161,18 @@ export default function DMConversationScreen({ navigation }) {
     const enemies = initializeEnemies(enemyList);
     initCombat(enemies); // → COMBAT_INIT state
 
-    // Show combat announcement — player taps "Roll for Initiative" to open the dice roller
+    // Show combat announcement — dice roller auto-opens as bottom sheet
     addMessage({
       id: `combat_start_${Date.now()}`,
       role: 'assistant',
-      content: { system_text: '⚔️ Combat begins! Prepare yourself.' },
+      content: { system_text: '⚔️ Combat begins! Roll for initiative.' },
       personaName: selectedPersona?.name,
       personaEmoji: selectedPersona?.emoji,
       timestamp: Date.now(),
     });
     setPendingCombatRoll({ type: 'initiative', enemies });
-    setWaitingForInitiative(true);
+    setWaitingForInitiative(false);
+    setDiceVisible(true);
     Haptics.notificationAsync(Haptics.NotificationFeedbackType.Warning);
   };
 
@@ -546,8 +547,9 @@ export default function DMConversationScreen({ navigation }) {
       };
       addMessage(openingMsg);
 
-      const beatInstruction = selectedCampaign?.isTutorial
+      const beatResult = selectedCampaign?.isTutorial
         ? getTutorialBeatInjection(1, sessionFlags) : null;
+      const beatInstruction = beatResult?.injection ?? null;
 
       const dmResponse = await callDM({
         messages: [{ role: 'user', content: openingMsg.content }],
@@ -580,8 +582,9 @@ export default function DMConversationScreen({ navigation }) {
   const sendMessage = useCallback(async (text, isCombatInternal = false) => {
     if (!text.trim() || isLoading || (isAtLimit && !isCombatInternal)) return;
 
-    if (!isCombatInternal) playerTurnCount.current += 1;
-    const hitLimit = !isCombatInternal && playerTurnCount.current >= FREE_PLAYER_TURNS;
+    const isTutorial = selectedCampaign?.isTutorial;
+    if (!isCombatInternal && !isTutorial) playerTurnCount.current += 1;
+    const hitLimit = !isCombatInternal && !isTutorial && playerTurnCount.current >= FREE_PLAYER_TURNS;
     if (combatEndBanner) setCombatEndBanner(null);
 
     const userMsg = {
@@ -598,8 +601,19 @@ export default function DMConversationScreen({ navigation }) {
       const apiMessages = getDMApiMessages();
       apiMessages.push({ role: 'user', content: text.trim() });
 
-      const beatInstruction = selectedCampaign?.isTutorial
+      const beatResult = selectedCampaign?.isTutorial
         ? getTutorialBeatInjection(playerTurnCount.current, sessionFlags) : null;
+      const beatInstruction = beatResult?.injection ?? null;
+
+      // When the goblin_plant beat fires, stamp the timestamp and message count
+      // so the Mik callback can use dual-condition time-gating.
+      if (beatResult?.beat?.sets_flag === 'goblin_encountered') {
+        setSessionFlags({
+          goblin_encountered: true,
+          tutorial_mik_plant_timestamp: Date.now(),
+          goblin_encountered_at_message: playerTurnCount.current,
+        });
+      }
 
       // If we just hit the limit, ask DM to wrap up
       const limitInstruction = hitLimit
@@ -818,8 +832,8 @@ export default function DMConversationScreen({ navigation }) {
                 </TouchableOpacity>
               </View>
 
-              {/* Player's last visible action */}
-              {lastPlayerMessage && (
+              {/* Player's last visible action — hidden when combat end banner is showing */}
+              {lastPlayerMessage && !combatEndBanner && (
                 <View style={styles.playerEcho}>
                   <Text style={styles.playerEchoLabel}>You</Text>
                   <Text style={styles.playerEchoText} numberOfLines={2}>{lastPlayerMessage}</Text>
@@ -865,17 +879,7 @@ export default function DMConversationScreen({ navigation }) {
           </>
         )}
 
-        {/* ── Initiative prompt (gate before dice roller opens) ── */}
-        {combatState === 'COMBAT_INIT' && waitingForInitiative && (
-          <TouchableOpacity
-            style={styles.initiativePromptBtn}
-            onPress={() => { setWaitingForInitiative(false); setDiceVisible(true); }}
-          >
-            <Text style={styles.initiativePromptText}>Roll for Initiative →</Text>
-          </TouchableOpacity>
-        )}
-
-        {/* ── Death save UI (replaces input bar when DOWNED) ── */}
+{/* ── Death save UI (replaces input bar when DOWNED) ── */}
         {combatState === 'DOWNED' && (
           <View style={styles.deathSaveBar}>
             <View style={styles.deathSavePips}>

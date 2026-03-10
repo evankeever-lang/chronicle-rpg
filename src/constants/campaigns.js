@@ -13,8 +13,10 @@ export const CAMPAIGNS = [
     difficulty: 'Introduction',
     estimatedLength: '15–20 messages',
     description: 'A short, contained adventure to learn the ropes. A simple task from a village elder: look into a disturbance at the old mill. Probably nothing.',
-    dmBrief: `This is a short tutorial adventure. The player is in the village of Ashwick. An elderly innkeeper named Elara has asked them to investigate her cellar, from which scratching sounds have been heard for three nights. The cellar contains two goblins who have taken up residence. One is aggressive; one, named Mik, will surrender if given the chance. There is a silver locket hidden behind a loose stone — its origin is unknown and should remain mysterious. The session ends when the player reports back to Elara, who rewards them with coin and a lead on a larger adventure. 
-Keep sessions to 15–20 exchanges. Introduce dice rolls naturally: a Perception check in the cellar, a possible Persuasion or Intimidation check with Mik, and an attack roll if combat occurs. Always suggest 3 actions at the end of each response.`,
+    dmBrief: `This is a short tutorial adventure. The player is in the village of Ashwick. An elderly innkeeper named Elara has asked them to investigate her cellar, from which scratching sounds have been heard for three nights. The cellar contains two goblins who have taken up residence. One is aggressive; one, named Mik, will surrender if given the chance. There is a silver locket hidden behind a loose stone — its origin is unknown and should remain mysterious. The session ends when the player reports back to Elara, who rewards them with coin and a lead on a larger adventure.
+Keep sessions to 15–20 exchanges. Introduce dice rolls naturally: a Perception check in the cellar, a possible Persuasion or Intimidation check with Mik, and an attack roll if combat occurs. Always suggest 3 actions at the end of each response.
+CRITICAL — MIK IS NOT A COMBATANT: After the spare/kill moment with Mik resolves, he must exit the scene before any combat begins. If spared, he slinks backward into a drainage tunnel and disappears into the dark. If killed, he lies where he fell — irrelevant to what follows. The combat encounter is with the OTHER goblin (the aggressive one who refused to back down). Mik must NEVER appear in state_updates.enemies. The enemies array for combat must contain only the aggressive goblin.
+FLAG REQUIRED — MIK'S FATE: The moment the player's choice about Mik is settled, write the outcome to state_updates.flags in that same response: { "goblin_spared": true } if the player spared him or let him flee, OR { "goblin_killed": true } if the player killed him. Set exactly one, in the response where the outcome resolves. Do not set either until the choice is final.`,
     persona: 'chronicler',
     isTutorial: true,
 
@@ -32,26 +34,41 @@ Keep sessions to 15–20 exchanges. Introduce dice rolls naturally: a Perception
       {
         id: 'goblin_plant',
         trigger_at_message: 5,
-        system_injection: `SCENE DIRECTIVE (this turn only): The player has entered or is about to enter the cellar. Introduce Mik — a small goblin who has been cornered near the back wall. He drops his crude weapon and holds up his hands, whimpering quietly. Do NOT have him say "I have hatchlings" yet — let that emerge if the player presses or threatens him. Make this moment feel small and incidental, not dramatic. One short paragraph. The player should not feel this is a pivot point. Move on naturally. IMPORTANT: This goblin's name is Mik. Use "Mik" consistently in narration, dialogue, suggested_actions, and in state_updates.enemies if combat starts — never "small goblin", "the goblin", or "it" once his name is established.`,
+        system_injection: `SCENE DIRECTIVE (this turn only): The player has entered or is about to enter the cellar. Introduce Mik — a small goblin who has been cornered near the back wall. He drops his crude weapon and holds up his hands, whimpering quietly. Do NOT have him say "I have hatchlings" yet — let that emerge if the player presses or threatens him. Make this moment feel small and incidental, not dramatic. One short paragraph. The player should not feel this is a pivot point. Move on naturally. IMPORTANT: This goblin's name is Mik. Use "Mik" consistently in narration and dialogue — never "small goblin", "the goblin", or "it" once his name is established.
+CRITICAL — MIK EXITS BEFORE COMBAT: Whatever the player decides — spare or kill — Mik must leave the scene in this response or the very next one, before any fight begins. If spared: he backs toward a drainage tunnel in the far wall and slips into the dark with a last frightened glance. If killed: he slumps and is gone. Either way, describe his exit and move on. The combat that follows (if any) is with the OTHER goblin — the aggressive one still lurking deeper in the cellar. Do NOT include Mik in state_updates.enemies. Only the aggressive goblin belongs there.
+FLAG REQUIRED: When the player's choice about Mik is settled this turn or next, write { "goblin_spared": true } or { "goblin_killed": true } to state_updates.flags in the response where the outcome resolves.`,
         sets_flag: 'goblin_encountered',
       },
       {
         id: 'mik_reveals_hatchlings',
         trigger_at_message: 7,
         requires_flag: 'goblin_encountered',
-        system_injection: `SCENE DIRECTIVE (this turn only): If the player is interrogating, threatening, or speaking with Mik, have him reveal he has young waiting for him somewhere outside the village. He refers to them as "little ones" or "hatchlings." His tone is not manipulative — he is simply stating a fact, scared. Do not dramatize it. One sentence from Mik is enough. Then continue the scene normally.`,
+        system_injection: `SCENE DIRECTIVE (this turn only): If the player is interrogating, threatening, or speaking with Mik, have him reveal he has young waiting for him somewhere outside the village. He refers to them as "little ones" or "hatchlings." His tone is not manipulative — he is simply stating a fact, scared. Do not dramatize it. One sentence from Mik is enough. Then continue the scene normally.
+FLAG REQUIRED: If Mik's fate is settled this turn, write { "goblin_spared": true } or { "goblin_killed": true } to state_updates.flags.`,
         sets_flag: 'mik_revealed_hatchlings',
       },
       {
         id: 'goblin_callback_spared',
-        trigger_at_message: 14,
+        trigger_condition: {
+          type: 'time_and_message',
+          min_messages_after_flag: 4,
+          after_flag: 'goblin_encountered',
+          min_ms_after_timestamp_flag: 'tutorial_mik_plant_timestamp',
+          min_ms: 10 * 60 * 1000,
+        },
         requires_flag: 'goblin_spared',
         system_injection: `SCENE DIRECTIVE (this turn only): The player is approaching the village to report back to Elara. Work in a brief, completely natural reference to Mik: a villager or child near the gate mentions offhandedly that a small goblin came through earlier, moving fast, heading north. They seemed frightened but unhurt. Do NOT call attention to this callback. Do NOT reference the cellar. One sentence, woven into the scene description. The player should piece it together themselves.`,
         sets_flag: 'mik_callback_delivered',
       },
       {
         id: 'goblin_callback_killed',
-        trigger_at_message: 14,
+        trigger_condition: {
+          type: 'time_and_message',
+          min_messages_after_flag: 4,
+          after_flag: 'goblin_encountered',
+          min_ms_after_timestamp_flag: 'tutorial_mik_plant_timestamp',
+          min_ms: 10 * 60 * 1000,
+        },
         requires_flag: 'goblin_killed',
         system_injection: `SCENE DIRECTIVE (this turn only): The player is approaching the village to report back to Elara. Near the village gate, a small goblin child — no older than a few years — is sitting in the road, looking in the direction of the cellar. She does not approach the player. She is simply waiting. Do NOT explain who she is. Do NOT reference Mik by name. One sentence. Move on with the scene.`,
         sets_flag: 'mik_callback_delivered',
@@ -105,19 +122,37 @@ Emphasize atmosphere and resource management. Enforce short rests. Make the play
 export const getCampaignById = (id) => CAMPAIGNS.find(c => c.id === id);
 
 /**
- * Returns the system_injection string for the given player message count,
- * or null if no tutorial beat is scheduled for that turn.
+ * Returns { injection, beat } for the beat that fires this turn, or null.
+ * Handles both simple trigger_at_message beats and trigger_condition beats.
  * Used by DMConversationScreen to inject scripted scene directives.
  */
-export function getTutorialBeatInjection(messageCount, sessionFlags = {}) {
+export function getTutorialBeatInjection(messageCount, sessionFlags = {}, nowMs = Date.now()) {
   const tutorial = CAMPAIGNS.find(c => c.isTutorial);
   if (!tutorial?.tutorial_beats?.length) return null;
 
   for (const beat of tutorial.tutorial_beats) {
+    // Guard: skip already-delivered beats
+    if (beat.excludes_flag && sessionFlags[beat.excludes_flag]) continue;
+
+    if (beat.trigger_condition) {
+      const tc = beat.trigger_condition;
+      if (tc.type === 'time_and_message') {
+        if (beat.requires_flag && !sessionFlags[beat.requires_flag]) continue;
+        const plantTime = sessionFlags[tc.min_ms_after_timestamp_flag];
+        if (!plantTime) continue; // plant hasn't fired yet
+        const enoughTime = nowMs - plantTime >= tc.min_ms;
+        const plantMessage = sessionFlags[tc.after_flag + '_at_message'] || 0;
+        const enoughMessages = messageCount >= plantMessage + tc.min_messages_after_flag;
+        if (!enoughTime || !enoughMessages) continue;
+        return { injection: beat.system_injection, beat };
+      }
+      continue; // unknown trigger_condition type — skip
+    }
+
+    // Simple trigger_at_message beat
     if (beat.trigger_at_message !== messageCount) continue;
     if (beat.requires_flag && !sessionFlags[beat.requires_flag]) continue;
-    if (beat.excludes_flag && sessionFlags[beat.excludes_flag]) continue;
-    return beat.system_injection;
+    return { injection: beat.system_injection, beat };
   }
   return null;
 }

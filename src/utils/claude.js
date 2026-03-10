@@ -149,14 +149,29 @@ If loot is found, set state_updates.loot to a loot system object.`;
 // Returns the system_injection string for this message number, or null.
 // Also returns which flag to set after this call fires.
 
-export function resolveTutorialBeat(campaign, messageCount, sessionFlags) {
+export function resolveTutorialBeat(campaign, messageCount, sessionFlags, nowMs = Date.now()) {
   if (!campaign?.tutorial_beats?.length) return { injection: null, setsFlag: null };
 
   for (const beat of campaign.tutorial_beats) {
+    if (beat.excludes_flag && sessionFlags[beat.excludes_flag]) continue;
+
+    if (beat.trigger_condition) {
+      const tc = beat.trigger_condition;
+      if (tc.type === 'time_and_message') {
+        if (beat.requires_flag && !sessionFlags[beat.requires_flag]) continue;
+        const plantTime = sessionFlags[tc.min_ms_after_timestamp_flag];
+        if (!plantTime) continue;
+        const enoughTime = nowMs - plantTime >= tc.min_ms;
+        const plantMessage = sessionFlags[tc.after_flag + '_at_message'] || 0;
+        const enoughMessages = messageCount >= plantMessage + tc.min_messages_after_flag;
+        if (!enoughTime || !enoughMessages) continue;
+        return { injection: beat.system_injection, setsFlag: beat.sets_flag };
+      }
+      continue;
+    }
+
     if (beat.trigger_at_message !== messageCount) continue;
     if (beat.requires_flag && !sessionFlags[beat.requires_flag]) continue;
-    if (beat.excludes_flag && sessionFlags[beat.excludes_flag]) continue;
-    // Beat matches — fire it
     return { injection: beat.system_injection, setsFlag: beat.sets_flag };
   }
   return { injection: null, setsFlag: null };
