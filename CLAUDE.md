@@ -265,38 +265,82 @@ The five levers that reduce API calls without reducing experience:
 5. **Exploration pacing** — non-combat travel between known locations uses local fast-travel with cached ambient text. AI reserved for: new locations, story beats, combat initiation, major decisions.
 
 ### Tutorial — Beat Design & Scope
-Tutorial is scoped by **narrative beats**, not message count. Target: 20–25 minutes of play. No message cap. Tutorial does not decrement the free tier counter.
+Tutorial is scoped by **narrative beats**, not message count. Target: 28–35 minutes of play. No message cap. Tutorial does not decrement the free tier counter. A player who completes this tutorial is the exact player who pays — do not optimise for speed.
 
-The 7 required beats:
+**The 10 required beats:**
 | Beat | Name | API Calls | Notes |
 |---|---|---|---|
-| 1 | World Drop | 1 | DM voice established in 3 sentences. No mechanics. |
-| 2 | First Choice | 1–2 | Low-stakes binary. Establishes agency before mechanics. |
-| 3 | Skill Check intro | 2 | DM triggers. Tooltip fires once on first d20 only. |
-| 4 | **Mik Plant** ✅ | 1 | Message ~3–5. Spare or kill. Deliberately throwaway framing. Mik exits scene immediately after. |
-| 5 | Combat encounter | 1–2 | Full new state machine. Mik is **not** in this fight. Should feel satisfying, not punishing. |
-| 6 | **Mik Callback** ✅ | 1 | Time-gated: minimum 10 minutes wall-clock after plant timestamp. The viral moment. |
-| 7 | Chronicle Card | 1 (Sonnet) | Auto-generated at arc end. Epithet reflects Mik choice. Share prompt fires. |
+| 1 | World Drop | 1 | DM voice established in 3 sentences. No mechanics. Ashwick at dusk. |
+| 2 | First Choice | 1–2 | Low-stakes binary on the way to the mill. Establishes agency before mechanics. |
+| 3 | Skill Check intro | 2 | Perception/Investigation in the cellar. Tooltip fires once on first d20 only. Locket discovered here. |
+| 4 | **Mik Plant** | 1 | Mik surrenders. Spare or kill. Deliberately throwaway. **Mik exits scene immediately. He is not in the combat.** Sets `tutorial_mik_plant_timestamp` + `goblin_spared`/`goblin_killed`. |
+| 5 | Combat | 1–2 | Aggressive goblin only. Full state machine. Satisfying, not punishing. |
+| 6 | Ortina reward | 1 | Report back upstairs. Player shows locket. Ortina doesn't recognise it but names a contact in town — an old scribe named Torven — who knows old seals and crests. |
+| 7 | Town exploration | 2–4 | Freeform. Player finds Torven. 2–3 exchanges. World texture. Torven recognises the locket as bearing a Firimbel noble crest — old bloodline, dangerous knowledge. Directs player to find **Ulthur** in Firimbel. Names the city once, clearly. |
+| 8 | **Mik Callback** | 1 | Fires during town exploration when both time and message conditions are met. The "holy shit" moment. |
+| 9 | Denouement | 1–2 | Player reacts to callback. Torven or the town itself surfaces one more texture beat. Firimbel sits open as a destination. World feels large. |
+| 10 | Chronicle Card | 1 (Sonnet) | Fires as the player is poised to leave Ashwick. Epithet reflects Mik choice. Share prompt fires. "Bound for Firimbel." |
 
-**Mik mechanic — two critical design rules:**
+---
 
-**Rule 1: Mik is not in the combat encounter.**
-The combat at Beat 5 is with a *different* enemy (the aggressive goblin, a guard, a creature — anything that isn't Mik). When the player spares Mik, he slinks away into the dark immediately. When the player kills Mik, he's gone. Either way, Mik must exit the scene before combat begins. If Mik is part of the combat encounter, the callback cannot surprise — the player just fought him. The plant-and-callback only works if Mik felt like a footnote, not a combatant.
+**Locket throughline:**
+The locket is found in the cellar at Beat 3 — mysterious craftsmanship, unknown origin. It is the object that carries the player from the tutorial into the first real campaign. Its significance escalates naturally:
+- Beat 3: found, described, feels like minor loot
+- Beat 6: Ortina doesn't recognise it but it clearly means something
+- Beat 7: Torven identifies the crest as Firimbel nobility — old bloodline, says the player should find Ulthur in Firimbel who will know more
+- Firimbel campaign: Ulthur knows the locket identifies a living heir whose existence could end the conflict between the Free Peoples Assembly, The Sundered, and the Stonehelm Guild
 
-The `goblin_plant` beat injection must explicitly direct the DM to have Mik flee the scene after the spare/kill moment, before any combat trigger. The combat that follows should feel like a *separate* event.
+The locket must never be fully explained in the tutorial. Torven gives just enough to create a destination, not an answer.
 
-**Rule 2: Callback is time-gated, not message-gated.**
-The current implementation triggers the callback at a fixed message number (e.g. message 16). The problem: combat rounds don't increment `playerTurnCount`. A player can spend 5+ real minutes in combat — tapping through initiative, attack rolls, damage, NPC turns — while the message counter barely moves. The callback fires "too soon" in wall-clock time even when it fires "late" in message count.
+---
 
-**Implementation:** Store `tutorial_mik_plant_timestamp` (Unix ms) in `sessionFlags` when Beat 4 fires. The callback beat resolver must check **both** conditions before firing:
-1. `playerTurnCount >= MIN_MESSAGES_AFTER_PLANT` (e.g. 4 narrative exchanges — enough to feel like story has moved on)
-2. `Date.now() - sessionFlags.tutorial_mik_plant_timestamp >= 10 * 60 * 1000` (10 minutes minimum)
+**Mik mechanic — critical rules:**
 
-If either condition fails, the callback beat is skipped that turn and re-evaluated on every subsequent message until both pass. This means a fast reader gets the callback after 10 minutes; a slow player might get it at 15. Both feel right. Neither feels like the game "remembered" immediately.
+**Rule 1: Mik is never a combatant.**
+The combat at Beat 5 is with the aggressive goblin only. Mik exits the scene immediately after the spare/kill decision — slinks into a tunnel if spared, lies dead and irrelevant if killed. The `goblin_plant` beat injection must explicitly direct the DM to remove Mik from the scene before any combat trigger. If Mik is in the fight, the callback cannot surprise.
 
-`sessionFlags.tutorial_mik_fate` drives the DM injection — this is **not** reliant on context window memory. Callback is always reliable regardless of summarisation state. Spare path: grateful goblin spotted helping travelers. Kill path: young goblin looking for her father. Chronicle Card epithet should reflect the choice where possible ("The Merciful" / "The Relentless").
+**Rule 2: Callback is dual-condition gated — time AND message count.**
+Combat rounds do not increment `playerTurnCount`. A player can spend 5+ real minutes in combat while the message counter barely moves. A fixed message trigger fires too soon in wall-clock time.
 
-**Beat resolver change:** Replace `trigger_at_message: N` (fixed) with a new field `trigger_condition: fn(messageCount, sessionFlags, nowMs)` for time-sensitive beats. The resolver in `claude.js` evaluates the function instead of doing a simple equality check. Non-tutorial beats and non-time-sensitive beats keep using `trigger_at_message` unchanged.
+Store `tutorial_mik_plant_timestamp` (Unix ms) in `sessionFlags` when Beat 4 fires. Also store `goblin_encountered_at_message: messageCount`. The callback beat resolver checks **both** before firing:
+1. `messageCount >= sessionFlags.goblin_encountered_at_message + 4` (at least 4 narrative exchanges post-plant)
+2. `Date.now() - sessionFlags.tutorial_mik_plant_timestamp >= 6 * 60 * 1000` (6 minutes wall-clock minimum)
+
+If either condition fails, skip this turn and re-evaluate next message. The callback fires during Beat 7 (town exploration) when both conditions are met — this is the ideal narrative headspace, curiosity not combat.
+
+**Rule 3: Forced callback safety net.**
+If the callback still hasn't fired by message 16, force it regardless of time gate. The tutorial cannot end without the callback landing. Add a `mik_callback_forced` beat at `trigger_at_message: 16` with `excludes_flag: 'mik_callback_fired'`. Both the normal and forced beats set `mik_callback_fired` on trigger. The normal beat also has `excludes_flag: 'mik_callback_fired'` to prevent double-fire.
+
+Spare path: a traveler passing through mentions a small goblin who's been helping people on the road east — an odd sight, but a kind one. Kill path: a child goblin appears at the edge of the market, scanning faces, looking for someone who isn't coming back. Both paths are injected via `sessionFlags.tutorial_mik_fate` — never reliant on context window memory.
+
+Chronicle Card epithet reflects the choice: **"The Merciful"** / **"The Relentless"**.
+
+---
+
+**Beat resolver architecture:**
+The resolver in `claude.js` supports two trigger types:
+
+```js
+// Simple fixed trigger (most beats)
+trigger_at_message: 5
+
+// Dual-condition time+message gate (Mik callback)
+trigger_condition: {
+  type: 'time_and_message',
+  min_messages_after_flag: 4,
+  after_flag: 'goblin_encountered',
+  min_ms_after_timestamp_flag: 'tutorial_mik_plant_timestamp',
+  min_ms: 6 * 60 * 1000,
+}
+
+// Minimum message fallback (forced callback safety net)
+trigger_condition: {
+  type: 'min_message',
+  min_message: 16,
+}
+```
+
+Non-tutorial beats always use `trigger_at_message`. The `trigger_condition` field only exists on tutorial beats that need timing logic.
 
 ### Rolling Summary — Context Window Management
 Two history tiers maintained at all times:
@@ -319,7 +363,7 @@ A `worldRegistry` object in GameContext, injected as a compact structured field 
 
 ```json
 {
-  "used_npc_names": ["Elara", "Marcus"],
+  "used_npc_names": ["Ortina", "Marcus"],
   "used_location_names": ["Thornwood", "The Broken Axe Inn"],
   "used_quest_names": ["A Warden's Errand"],
   "used_item_names": []
@@ -328,7 +372,7 @@ A `worldRegistry` object in GameContext, injected as a compact structured field 
 
 **DM system prompt must include:** *"Never reuse any name from worldRegistry.used_npc_names. Draw NPC names from the campaign name_pool instead."*
 
-On campaign creation, inject a `name_pool` of 40–60 culturally appropriate names for the campaign's setting. The AI draws from this pool, not statistical priors. This prevents the "Elara problem" (every AI model defaults to the same high-frequency fantasy names from training data — Chronicle's first generated NPC was named Elara unprompted).
+On campaign creation, inject a `name_pool` of 40–60 culturally appropriate names for the campaign's setting. The AI draws from this pool, not statistical priors. This prevents the "Ortina problem" (every AI model defaults to the same high-frequency fantasy names from training data — Chronicle's first generated NPC was named Ortina unprompted).
 
 ### DM Personas
 4 archetypes in `src/constants/personas.js`:
@@ -572,7 +616,84 @@ When it's the player's turn:
 
 ---
 
-## Competitive Context
+## World Lore & Campaign Canon
+
+### The World (Established)
+Do not over-specify. The AI DM fills in texture. These are the fixed anchors that must stay consistent across all campaigns and the tutorial.
+
+**Ashwick** — A small village. Quiet, slightly worn. The tutorial is set here. Ortina runs the inn. Torven is a retired scribe who knows old seals and noble crests. The tutorial ends with the player leaving Ashwick for Firimbel.
+
+**Firimbel** — A large city, the primary setting for the first authored campaign. Currently in a state of political unrest driven by a three-way power struggle. Has a history significant enough that old noble bloodlines still carry legal and symbolic weight.
+
+**The Locket** — Found in the cellar beneath the Ashwick mill during the tutorial. Bears a Firimbel noble crest — an old bloodline marker. Torven recognises it as significant but dangerous and directs the player to find Ulthur in Firimbel. The locket identifies a living heir whose existence could resolve (or detonate) the conflict in Firimbel. The heir is unnamed and unknown to themselves. The locket must never be fully explained in the tutorial — only enough to create a destination.
+
+### The Three Factions (Firimbel)
+
+**Free Peoples Assembly**
+Good-leaning. A democratic coalition of multiple races. Legitimate, hopeful, slow — as democracies are. Wants to find and protect the heir, whose existence would legitimise their authority and provide a legal resolution to the conflict. Vulnerable to internal fracture and manipulation. Players who align with them are doing the right thing, messily.
+
+**The Sundered**
+Evil-leaning. An orc-majority warband. The name implies history — something broken or cast out, not merely aggressive. They have grievances that predate the current conflict, which the AI DM should honour. They want the heir dead or discredited — a legitimate heir destroys whatever claim they are pressing. Not cartoonishly evil; dangerous and wounded.
+
+**Stonehelm Guild**
+Neutral. Dwarf-majority merchant guild. Has been in Firimbel longer than the conflict and intends to outlast it. Will deal with anyone. Wants to control access to the heir — the ultimate leverage position. Their neutrality is principled self-interest, not cowardice. The player will likely negotiate with them most.
+
+**Ulthur** — A figure in Firimbel who knows the locket's full significance and the heir's identity. Not the heir themselves. Has reasons for staying quiet this long. His agenda is his own. He is the player's first major contact in Firimbel and the keeper of the secret.
+
+**The heir** — Unnamed. A living person in Firimbel who does not know their own lineage. The DM should protect this secret until the player earns the reveal through the campaign. The identity is never specified in any system prompt — the DM generates it dynamically and holds it consistently via sessionFlags once established.
+
+---
+
+## Campaigns
+
+### Tutorial: "A Warden's Errand"
+See Tutorial — Beat Design & Scope section above for full beat spec.
+
+`dmBrief`:
+> This is a tutorial adventure set in the village of Ashwick. The player has been asked by Ortina, the innkeeper, to investigate scratching sounds coming from the cellar of the old mill for three nights.
+>
+> The cellar contains two goblins. One is aggressive and will fight. The other, named Mik, will surrender if given the chance — he has young waiting for him. Mik's fate is the player's first moral choice. Play it as a throwaway moment, not a dramatic one. After the spare/kill decision, Mik exits the scene immediately — he slinks into a tunnel if spared, or is simply dead if killed. He is not part of the fight that follows.
+>
+> Behind a loose stone in the cellar wall is a silver locket with an unusual crest. The player may find it with a successful Perception or Investigation check. Describe it as finely made, slightly old, bearing a crest the player doesn't recognise.
+>
+> After the cellar is resolved, the player returns to Ortina upstairs. She rewards them with coin. If the player shows her the locket, she doesn't recognise the crest but suggests they speak with Torven — a retired scribe who lives near the market, knows old symbols and noble marks.
+>
+> Torven recognises the locket's crest as Firimbel nobility — old bloodline, he says, and goes quiet. He tells the player to find a man named Ulthur in Firimbel, and only Ulthur. He won't say more. Name the city clearly: Firimbel.
+>
+> The session ends when the player is ready to leave Ashwick. Do not rush this — let them explore the town, talk to people, linger. The world should feel lived-in. End the session when it has a natural sense of completion and forward momentum, not at a fixed message count.
+>
+> FLAG REQUIRED: When Mik's fate resolves, you must write `goblin_spared: true` OR `goblin_killed: true` to `state_updates.flags`. This is mandatory. Do not narrate past this moment without setting the flag.
+
+### Campaign 1: "The Sundered Crown" *(Firimbel)*
+**Tone:** Political intrigue, moral ambiguity, escalating stakes. Grounded — the conflict is about power and people, not cosmic evil.
+
+**Setting:** Firimbel. A large city under three-way political pressure. The Free Peoples Assembly holds nominal authority but is fracturing. The Sundered are pressing from outside the city and within. The Stonehelm Guild controls the flow of money and information and is watching carefully.
+
+**Opening hook:** The player arrives in Firimbel looking for Ulthur. Finding him is not simple — he is being watched. The city should feel tense from the first scene: patrols, whispered conversations, faction insignia on buildings and people.
+
+**Ulthur:** Knows the locket's significance. Knows the heir's identity. Has been protecting both secrets for years. Has his own agenda — he is not purely an ally. The player must earn his trust before he shares what he knows.
+
+**The heir:** A living person in Firimbel, unnamed in all system prompts. The DM establishes their identity dynamically early in the campaign and holds it via sessionFlags. They do not know their own lineage. The player must decide when to tell them — and who else to tell first.
+
+**Faction dynamics:**
+- Aligning with the Assembly is the "right" choice, complicated by their internal dysfunction
+- The Sundered are the obvious threat but have legitimate grievances the DM should honour — not every Sundered NPC is a villain
+- The Guild will negotiate with anyone, including the player, for the right price
+
+**DM brief:**
+> The player arrives in Firimbel from Ashwick, carrying a locket bearing a noble bloodline crest. They are looking for a man named Ulthur.
+>
+> Firimbel is in conflict. The Free Peoples Assembly — a multi-race democratic coalition — holds nominal authority but is weakening. The Sundered, an orc-majority warband with old grievances, are pressing their claim through force and political disruption. The Stonehelm Guild, a dwarf-majority merchant guild, is neutral and watching, dealing with all sides.
+>
+> The locket identifies a living heir to an old Firimbel noble bloodline. This heir, currently unaware of their lineage, would legitimise the Assembly's authority if their identity became known — and would be hunted by the Sundered for the same reason. The Guild would want to control the heir as leverage.
+>
+> Ulthur knows all of this. He has been protecting the secret for years. He is not easily found and not easily trusted. The player must navigate the city to reach him.
+>
+> Establish the heir's identity early (message 3–5) and store it as a sessionFlag. Never reveal it to the player until they have earned it through the campaign. Protect this secret as Ulthur would.
+>
+> Let the player choose their faction alignment organically — do not force it. Every faction should have NPCs with depth. The Sundered in particular have legitimate grievances; not every member is a villain.
+
+
 - **Primary competitor:** Everweave (iOS, ~340K downloads, 3.7★). Solo developer. Critical failures we are solving: walls of text, broken dice math, toxic message cap monetisation, no party context, no shareable output.
 - **Biggest strategic threat:** AI Dungeon "Heroes" update — structured RPG mechanics being added to 3M+ download base. Monitor their dev logs weekly. Launch before Heroes ships.
 - **Our differentiators:** Structured narration blocks, visible game-state HUD, deterministic client-side dice, fair unlimited paid tier, Chronicle Card social loop, adaptive music (first in category), Claude narrative quality.

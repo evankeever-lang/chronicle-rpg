@@ -7,9 +7,8 @@ import {
 import { LinearGradient } from 'expo-linear-gradient';
 import * as Haptics from 'expo-haptics';
 import { useGame } from '../context/GameContext';
-import { callDM, generateSessionSummary } from '../utils/claude';
+import { callDM, generateSessionSummary, resolveTutorialBeat } from '../utils/claude';
 import { markTutorialCompleted } from '../utils/progress';
-import { getTutorialBeatInjection } from '../constants/campaigns';
 import DMMessage from '../components/DMMessage';
 import DiceRoller from '../components/DiceRoller';
 import ChronicleCard from '../components/ChronicleCard';
@@ -471,6 +470,11 @@ export default function DMConversationScreen({ navigation }) {
 
   // ── Player-turn message counter (only counts what player sends) ─────────────
   const playerTurnCount = useRef(0);
+  // Tutorial beat counter — increments for every tutorial player message.
+  // playerTurnCount is exempt for tutorials (no daily-limit charge), but beats
+  // still need a reliable count. Starts at 1 so opening_scene (hardcoded to 1
+  // in startNewGame) doesn't re-fire on the player's first message.
+  const tutorialBeatCount = useRef(1);
   const FREE_PLAYER_TURNS = 40;
   const WARN_AT = FREE_PLAYER_TURNS - 8; // warn at 32
 
@@ -548,7 +552,7 @@ export default function DMConversationScreen({ navigation }) {
       addMessage(openingMsg);
 
       const beatResult = selectedCampaign?.isTutorial
-        ? getTutorialBeatInjection(1, sessionFlags) : null;
+        ? resolveTutorialBeat(selectedCampaign, 1, sessionFlags) : null;
       const beatInstruction = beatResult?.injection ?? null;
 
       const dmResponse = await callDM({
@@ -583,7 +587,10 @@ export default function DMConversationScreen({ navigation }) {
     if (!text.trim() || isLoading || (isAtLimit && !isCombatInternal)) return;
 
     const isTutorial = selectedCampaign?.isTutorial;
-    if (!isCombatInternal && !isTutorial) playerTurnCount.current += 1;
+    if (!isCombatInternal) {
+      if (isTutorial) tutorialBeatCount.current += 1;
+      else playerTurnCount.current += 1;
+    }
     const hitLimit = !isCombatInternal && !isTutorial && playerTurnCount.current >= FREE_PLAYER_TURNS;
     if (combatEndBanner) setCombatEndBanner(null);
 
@@ -602,17 +609,20 @@ export default function DMConversationScreen({ navigation }) {
       apiMessages.push({ role: 'user', content: text.trim() });
 
       const beatResult = selectedCampaign?.isTutorial
-        ? getTutorialBeatInjection(playerTurnCount.current, sessionFlags) : null;
+        ? resolveTutorialBeat(selectedCampaign, tutorialBeatCount.current, sessionFlags) : null;
       const beatInstruction = beatResult?.injection ?? null;
 
-      // When the goblin_plant beat fires, stamp the timestamp and message count
-      // so the Mik callback can use dual-condition time-gating.
-      if (beatResult?.beat?.sets_flag === 'goblin_encountered') {
-        setSessionFlags({
-          goblin_encountered: true,
-          tutorial_mik_plant_timestamp: Date.now(),
-          goblin_encountered_at_message: playerTurnCount.current,
-        });
+      // Persist sets_flag + any sets_timestamp / sets_message_count from the fired beat.
+      if (beatResult?.beat) {
+        const flagsToSet = {};
+        if (beatResult.beat.sets_flag) flagsToSet[beatResult.beat.sets_flag] = true;
+        if (beatResult.extraFlags) Object.assign(flagsToSet, beatResult.extraFlags);
+        if (Object.keys(flagsToSet).length) setSessionFlags(flagsToSet);
+      }
+
+      // Tutorial end beat → queue Chronicle generation after DM responds
+      if (beatResult?.beat?.id === 'tutorial_end') {
+        pendingLimitChronicle.current = true;
       }
 
       // If we just hit the limit, ask DM to wrap up
