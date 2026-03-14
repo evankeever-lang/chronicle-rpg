@@ -1,5 +1,5 @@
 import React, { useState } from 'react';
-import { View, Text, ScrollView, TouchableOpacity, TextInput, StyleSheet, SafeAreaView } from 'react-native';
+import { View, Text, ScrollView, TouchableOpacity, TextInput, StyleSheet, SafeAreaView, Image } from 'react-native';
 import { LinearGradient } from 'expo-linear-gradient';
 import { RACES, getRaceById } from '../constants/races';
 import { CLASSES, getClassById } from '../constants/classes';
@@ -9,6 +9,7 @@ import {
   getAbilityModifier, getModifierString, getProficiencyBonus,
   calculateMaxHP, getPointBuyCost, getTotalPointsSpent,
 } from '../utils/dice';
+import { RaceArt, ClassArt } from '../assets';
 
 const STEPS = ['Race', 'Class', 'Stats', 'Name'];
 const POINT_BUY_TOTAL = 27;
@@ -166,6 +167,9 @@ function StepRace({ selectedId, onSelect }) {
           </View>
           {selectedId === race.id && (
             <View style={styles.optionExpanded}>
+              {RaceArt[race.id] && (
+                <Image source={RaceArt[race.id]} style={styles.optionArt} resizeMode="cover" />
+              )}
               <Text style={styles.optionLore}>{race.lore}</Text>
               <View style={styles.bonusRow}>
                 {Object.entries(race.statBonuses).map(([k, v]) => (
@@ -212,6 +216,9 @@ function StepClass({ selectedId, onSelect }) {
           </View>
           {selectedId === cls.id && (
             <View style={styles.optionExpanded}>
+              {ClassArt[cls.id] && (
+                <Image source={ClassArt[cls.id]} style={styles.optionArt} resizeMode="cover" />
+              )}
               <Text style={styles.optionLore}>{cls.description}</Text>
               <Text style={styles.subSectionLabel}>Level 1 Abilities</Text>
               {cls.level1Abilities.map(a => (
@@ -380,6 +387,7 @@ const styles = StyleSheet.create({
   optionName: { fontFamily: FONTS.serif, fontSize: FONT_SIZES.lg, color: COLORS.textPrimary, fontWeight: '700' },
   optionTagline: { fontFamily: FONTS.sansSerif, fontSize: FONT_SIZES.sm, color: COLORS.textSecondary },
   optionExpanded: { marginTop: SPACING.md, borderTopWidth: 1, borderColor: COLORS.border, paddingTop: SPACING.md },
+  optionArt: { width: '100%', height: 140, borderRadius: RADIUS.md, marginBottom: SPACING.md },
   optionLore: { fontFamily: FONTS.sansSerif, fontSize: FONT_SIZES.sm, color: COLORS.textSecondary, lineHeight: 20, marginBottom: SPACING.md },
   optionMeta: { fontFamily: FONTS.sansSerif, fontSize: FONT_SIZES.sm, color: COLORS.textPrimary },
 

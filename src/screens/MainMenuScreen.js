@@ -13,6 +13,7 @@ import {
 } from 'react-native';
 import { LinearGradient } from 'expo-linear-gradient';
 import { loadGame, deleteSave, timeSince } from '../utils/storage';
+import { Splashes } from '../assets';
 import { resetProgress } from '../utils/progress';
 import { useGame } from '../context/GameContext';
 import { COLORS, FONTS, FONT_SIZES, SPACING, RADIUS, SHADOWS } from '../constants/theme';
@@ -115,7 +116,7 @@ export default function MainMenuScreen({ navigation }) {
 
   return (
     <ImageBackground
-      source={require('../../assets/menu-background.jpeg')}
+      source={Splashes.mainMenu}
       style={styles.bgImage}
       resizeMode="cover"
     >

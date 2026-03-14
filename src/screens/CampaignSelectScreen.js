@@ -1,11 +1,12 @@
 import React, { useState, useEffect } from 'react';
-import { View, Text, ScrollView, TouchableOpacity, StyleSheet, SafeAreaView } from 'react-native';
+import { View, Text, ScrollView, TouchableOpacity, StyleSheet, SafeAreaView, Image } from 'react-native';
 import { LinearGradient } from 'expo-linear-gradient';
 import { CAMPAIGNS } from '../constants/campaigns';
 import { getDefaultPersonaForCampaign, getPersonaById } from '../constants/personas';
 import { useGame } from '../context/GameContext';
 import { loadProgress } from '../utils/progress';
 import { COLORS, FONTS, FONT_SIZES, SPACING, RADIUS, SHADOWS } from '../constants/theme';
+import { CampaignArt } from '../assets';
 
 const DIFFICULTY_COLORS = {
   Introduction: COLORS.success,
@@ -85,6 +86,9 @@ function CampaignCard({ campaign, locked, onPress }) {
       activeOpacity={locked ? 1 : 0.85}
       disabled={locked}
     >
+      {CampaignArt[campaign.id] && (
+        <Image source={CampaignArt[campaign.id]} style={styles.cardBanner} resizeMode="cover" />
+      )}
       <View style={styles.cardInner}>
         {/* Genre row + badges */}
         <View style={styles.cardTopRow}>
@@ -185,6 +189,7 @@ const styles = StyleSheet.create({
     overflow: 'hidden',
     ...SHADOWS.md,
   },
+  cardBanner: { width: '100%', height: 120 },
   cardInner: { padding: SPACING.lg },
 
   cardTopRow: {
