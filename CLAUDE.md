@@ -43,7 +43,7 @@ Six workstreams to reach soft-launch readiness. Build in this order:
 - Use `claude-sonnet-4-6` only for session summary / Chronicle Card generation
 - Prompt caching on system prompt, persona, campaign context, character sheet — these 4 blocks marked `cache_control: ephemeral`
 - World state (HP, inventory, conditions, quest flags, combat state) lives in structured JSON (GameContext), **never** in AI context window
-- Rolling summary system: Phase 2 for regular campaigns; already exempt in tutorial (see below)
+- Rolling summary system: auto-triggers from GameContext `useEffect` — no manual call needed (see Rolling Summary section)
 
 ### Message Counting & Free Tier
 - Count ONLY player-sent turns, not DM responses
@@ -343,16 +343,18 @@ trigger_condition: {
 Non-tutorial beats always use `trigger_at_message`. The `trigger_condition` field only exists on tutorial beats that need timing logic.
 
 ### Rolling Summary — Context Window Management
-Two history tiers maintained at all times:
+Four memory tiers maintained at all times:
 
 | Tier | What it is | Rules |
 |---|---|---|
-| **Raw recency window** | Last 8–10 full exchanges | Always sent verbatim. Never summarised. Preserves DM tone and conversational momentum. |
-| **Rolling summary** | Everything older | ~200-token narrative digest. Factual compression only. |
+| **Raw recency window** | Last 20 messages (10 full exchanges) | Always sent verbatim. Never summarised. Preserves DM tone and conversational momentum. |
+| **Rolling summary** | Everything older | ~200-token narrative digest. Factual compression only. Auto-updated by GameContext `useEffect`. |
 | **sessionFlags** | Consequential choices | Permanent. Never summarised. Always injected. Zero context cost. |
 | **worldRegistry** | All proper nouns used | Compact JSON. Injected as ~50-token field each call. |
+| **entityRegistry** | Richer per-entity data | `{ npcs, locations, items }` — upserted after each DM call from `state_updates`. Session-scoped. |
+| **campaignMemory** | Cross-session digest | 80–100 token note generated at Chronicle Card end. Persists in save state. Injected via `## Prior Session Memory` block at session start. |
 
-Summarisation triggers:
+Summarisation triggers (auto-fired — no manual call needed):
 - Standard campaigns: first roll at message 15, then every 15 messages
 - Tutorial: first roll at message 25 (tutorial must feel coherent start-to-finish)
 - Context ceiling: ~4,000 tokens of history max, regardless of campaign age
@@ -430,13 +432,20 @@ Key state fields beyond character:
   // Story
   sessionFlags: {},         // discrete story events — never summarised, always injected
   npcMemory: [],            // known NPCs with name, race, status, disposition, lastSeen, notes
-  worldRegistry: {          // all proper nouns used — injected to prevent repetition
+  worldRegistry: {          // all proper nouns used — injected to prevent name repetition
     used_npc_names: [],
     used_location_names: [],
     used_quest_names: [],
     used_item_names: [],
   },
-  rollingSummary: null,     // compact narrative digest replacing old conversation history
+  rollingSummary: null,     // ~200-token digest auto-updated every 15 turns by GameContext useEffect
+  entityRegistry: {         // richer per-entity data upserted after each DM call (session-scoped)
+    npcs: [],               // [{ name, race, disposition, notes }] — from state_updates.npc_updates
+    locations: [],          // [{ name, notes }]
+    items: [],              // [{ name }] — from state_updates.loot.items
+  },
+  campaignMemory: null,     // 80–100 token cross-session note; generated at Chronicle Card end;
+                            // persists in save state; injected as ## Prior Session Memory at session start
   messageCount: 0,          // player turns only
 
   // Combat
