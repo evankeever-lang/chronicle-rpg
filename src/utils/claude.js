@@ -1,14 +1,87 @@
-// ─── Claude API Integration ───────────────────────────────────────────────────
-import { ANTHROPIC_API_KEY } from '../constants/secrets';
+// ─── AI Provider Config ───────────────────────────────────────────────────────
+// Switch PROVIDER to 'openai' to use GPT-4o mini instead of Claude.
+// Requires OPENAI_API_KEY set in src/constants/secrets.js.
+import { ANTHROPIC_API_KEY, OPENAI_API_KEY } from '../constants/secrets';
 
-const API_KEY = ANTHROPIC_API_KEY;
-const API_URL = 'https://api.anthropic.com/v1/messages';
-const DM_MODEL = 'claude-haiku-4-5-20251001'; // Primary DM: fast + cheap
-const SUMMARY_MODEL = 'claude-haiku-4-5-20251001';
+export const PROVIDER = 'openai'; // 'anthropic' | 'openai'
+
+// Anthropic
+const ANTHROPIC_URL = 'https://api.anthropic.com/v1/messages';
+const ANTHROPIC_DM_MODEL = 'claude-haiku-4-5-20251001';
+const ANTHROPIC_SUMMARY_MODEL = 'claude-haiku-4-5-20251001';
+
+// OpenAI
+const OPENAI_URL = 'https://api.openai.com/v1/chat/completions';
+const OPENAI_DM_MODEL = 'gpt-4o-mini';
+const OPENAI_SUMMARY_MODEL = 'gpt-4o-mini';
+
+// Active models (resolved from PROVIDER)
+const DM_MODEL = PROVIDER === 'openai' ? OPENAI_DM_MODEL : ANTHROPIC_DM_MODEL;
+const SUMMARY_MODEL = PROVIDER === 'openai' ? OPENAI_SUMMARY_MODEL : ANTHROPIC_SUMMARY_MODEL;
+
+// ─── Provider Adapter ─────────────────────────────────────────────────────────
+// callModel abstracts Anthropic and OpenAI into one interface.
+// systemPrompt: string
+// messages: [{ role, content }]
+// Returns the text content of the first response choice.
+async function callModel({ systemPrompt, messages, model, maxTokens, useCache = false }) {
+  if (PROVIDER === 'openai') {
+    const response = await fetch(OPENAI_URL, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        'Authorization': `Bearer ${OPENAI_API_KEY}`,
+      },
+      body: JSON.stringify({
+        model,
+        max_tokens: maxTokens,
+        messages: [
+          { role: 'system', content: systemPrompt },
+          ...messages,
+        ],
+      }),
+    });
+    if (!response.ok) {
+      const err = await response.json().catch(() => ({}));
+      throw new Error(err?.error?.message || `OpenAI error ${response.status}`);
+    }
+    const data = await response.json();
+    if (__DEV__) console.log('[OpenAI usage]', data.usage);
+    return data.choices?.[0]?.message?.content || '';
+  }
+
+  // Anthropic (default)
+  const headers = {
+    'Content-Type': 'application/json',
+    'x-api-key': ANTHROPIC_API_KEY,
+    'anthropic-version': '2023-06-01',
+  };
+  if (useCache) headers['anthropic-beta'] = 'prompt-caching-2024-07-31';
+
+  const response = await fetch(ANTHROPIC_URL, {
+    method: 'POST',
+    headers,
+    body: JSON.stringify({
+      model,
+      max_tokens: maxTokens,
+      system: useCache
+        ? systemPrompt // passed as pre-built blocks array when caching
+        : [{ type: 'text', text: systemPrompt }],
+      messages,
+    }),
+  });
+  if (!response.ok) {
+    const err = await response.json().catch(() => ({}));
+    throw new Error(err?.error?.message || `API error ${response.status}`);
+  }
+  const data = await response.json();
+  if (__DEV__) console.log('[Claude usage]', data.usage);
+  return data.content?.[0]?.text || '';
+}
 
 // ─── System Prompt Builder ────────────────────────────────────────────────────
 
-export function buildSystemPrompt(character, campaign, persona, sessionFlags, npcMemory, beatInjection = null) {
+export function buildSystemPrompt(character, campaign, persona, sessionFlags, npcMemory, beatInjection = null, campaignMemory = null) {
   // ── Static block (persona + rules + campaign — cached per session) ──────────
   const staticBlock = `${persona.systemPersona}
 
@@ -140,7 +213,11 @@ If loot is found, set state_updates.loot to a loot system object.`.trim();
     ? `## SCENE DIRECTIVE — THIS RESPONSE ONLY\n${beatInjection}`
     : null;
 
-  const dynamicBlock = [characterBlock, stateBlock, npcBlock, beatBlock].filter(Boolean).join('\n\n');
+  const campaignMemoryBlock = campaignMemory
+    ? `## Prior Session Memory\n${campaignMemory}`
+    : null;
+
+  const dynamicBlock = [characterBlock, stateBlock, npcBlock, campaignMemoryBlock, beatBlock].filter(Boolean).join('\n\n');
 
   return { staticBlock, dynamicBlock };
 }
@@ -231,41 +308,30 @@ export async function sendDMMessage({
   sessionFlags,
   npcMemory,
   beatInjection = null,
+  campaignMemory = null,
 }) {
-  const { staticBlock, dynamicBlock } = buildSystemPrompt(character, campaign, persona, sessionFlags, npcMemory, beatInjection);
+  const { staticBlock, dynamicBlock } = buildSystemPrompt(character, campaign, persona, sessionFlags, npcMemory, beatInjection, campaignMemory);
 
   const messages = [
-    ...conversationHistory.slice(-12),
+    ...conversationHistory.slice(-20),
     { role: 'user', content: userMessage },
   ];
 
-  const response = await fetch(API_URL, {
-    method: 'POST',
-    headers: {
-      'Content-Type': 'application/json',
-      'x-api-key': API_KEY,
-      'anthropic-version': '2023-06-01',
-      'anthropic-beta': 'prompt-caching-2024-07-31',
-    },
-    body: JSON.stringify({
-      model: DM_MODEL,
-      max_tokens: 1000,
-      system: [
-        { type: 'text', text: staticBlock, cache_control: { type: 'ephemeral' } }, // persona + rules + campaign — cached
-        { type: 'text', text: dynamicBlock }, // character state + flags + NPCs + beat — fresh each call
-      ],
-      messages,
-    }),
+  // Anthropic: pass system as pre-built cache blocks; OpenAI: concatenate into one string
+  const systemPrompt = PROVIDER === 'openai'
+    ? `${staticBlock}\n\n${dynamicBlock}`
+    : [
+        { type: 'text', text: staticBlock, cache_control: { type: 'ephemeral' } },
+        { type: 'text', text: dynamicBlock },
+      ];
+
+  const raw = await callModel({
+    systemPrompt,
+    messages,
+    model: DM_MODEL,
+    maxTokens: 1000,
+    useCache: PROVIDER === 'anthropic',
   });
-
-  if (!response.ok) {
-    const err = await response.json().catch(() => ({}));
-    throw new Error(err?.error?.message || `API error ${response.status}`);
-  }
-
-  const data = await response.json();
-  if (__DEV__) console.log('[Claude usage]', data.usage);
-  const raw = data.content?.[0]?.text || '';
 
   return parseDMResponse(raw);
 }
@@ -340,6 +406,7 @@ export async function callDM({
   sessionFlags,
   npcMemory = [],
   tutorialBeatInstruction = null,
+  campaignMemory = null,
 }) {
   // messages is the full history including the new user turn at the end
   const history = messages.slice(0, -1);
@@ -359,6 +426,7 @@ export async function callDM({
     sessionFlags: sessionFlags || {},
     npcMemory: npcMemory || [],
     beatInjection: tutorialBeatInstruction,
+    campaignMemory: campaignMemory || null,
   });
 
   // npc_dialogue: pass full array; DMMessage handles multiple speakers
@@ -383,8 +451,17 @@ export async function callDM({
     }
   }
 
-  // state_updates: rename fields to match DMConversationScreen's applyStateUpdates
+  // entity_updates: extracted from state_updates for entityRegistry population
   const su = raw.state_updates || {};
+  const entityUpdates = {
+    npcs: (su.npc_updates || [])
+      .filter(n => n?.name)
+      .map(n => ({ name: n.name, race: n.race || null, disposition: n.disposition || null, notes: n.notes || null })),
+    items: (su.loot?.items || []).map(name => ({ name })),
+    locations: [],
+  };
+
+  // state_updates: rename fields to match DMConversationScreen's applyStateUpdates
   const stateUpdates = {
     hp_change: su.hp_change || null,
     gold_change: su.loot?.gold || null,
@@ -409,7 +486,75 @@ export async function callDM({
     combat_start: raw.combat_start,
     combat_end: raw.combat_end,
     enemy_action: raw.enemy_action,
+    // Entity registry updates — caller dispatches updateEntityRegistry
+    entity_updates: (entityUpdates.npcs.length || entityUpdates.items.length) ? entityUpdates : null,
   };
+}
+
+// ─── Rolling Summary Generator ────────────────────────────────────────────────
+// Called every 15 player turns (25 for tutorial) to compress older history.
+// Replaces the oldest conversation context with a ~200-token narrative digest.
+
+export async function generateRollingSummary({ character, campaign, messages, sessionFlags, existingSummary = null }) {
+  const msgs = messages || [];
+  const recent = msgs
+    .slice(-30)
+    .map(m => {
+      if (m.role === 'user' && m.displayText) return `P: ${m.displayText}`;
+      if (m.role === 'assistant' && m.content?.narration) return `DM: ${m.content.narration}`;
+      return null;
+    })
+    .filter(Boolean)
+    .join('\n');
+
+  const activeFlags = Object.keys(sessionFlags).filter(k => sessionFlags[k] === true).join(', ') || 'none';
+  const prior = existingSummary ? `Prior summary: ${existingSummary}\n\n` : '';
+  const prompt = `${prior}Compress the following RPG session transcript into a single paragraph of 180–220 tokens. Facts only — no flavour. Third person. Preserve: character name, key decisions, NPC names, locations visited, quest progress, story flags.
+
+Character: ${character.name} (${character.class?.name || character.class})
+Campaign: ${campaign.title}
+Active story flags: ${activeFlags}
+
+Transcript:
+${recent}`;
+
+  return callModel({
+    systemPrompt: 'You are a concise RPG session summariser. Output only the summary paragraph, no headers.',
+    messages: [{ role: 'user', content: prompt }],
+    model: SUMMARY_MODEL,
+    maxTokens: 300,
+  }).then(t => t.trim()).catch(() => existingSummary || '');
+}
+
+// ─── Campaign Memory Generator ────────────────────────────────────────────────
+// Generates a 100-token cross-session memory note. Called at Chronicle Card
+// generation and stored in save state. Injected via buildSystemPrompt at
+// session start so the DM has prior-session context without a full transcript.
+
+async function generateCampaignMemory({ character, campaign, sessionFlags, npcMemory }) {
+  const flags = Object.keys(sessionFlags).filter(k => sessionFlags[k] === true).join(', ') || 'none';
+  const npcs = npcMemory.map(n => n.name).join(', ') || 'none';
+
+  const prompt = `Write an 80–100 token memory note for an RPG campaign save file. This will be injected at the start of future sessions so the DM knows what happened before.
+
+Character: ${character.name} the ${character.race?.name || character.race} ${character.class?.name || character.class}, Level ${character.level}
+Campaign: ${campaign.title}
+Story flags set: ${flags}
+NPCs met: ${npcs}
+
+Rules:
+- Past tense, third person.
+- Facts only: what was done, who was met, where they are headed.
+- End with the character's current goal or destination.
+- 80–100 tokens max. Dense, no padding.
+- Output ONLY the memory text.`;
+
+  return callModel({
+    systemPrompt: 'You are a concise RPG save file writer.',
+    messages: [{ role: 'user', content: prompt }],
+    model: SUMMARY_MODEL,
+    maxTokens: 150,
+  }).then(t => t.trim()).catch(() => null);
 }
 
 // ─── Session Summary Generator ────────────────────────────────────────────────
@@ -456,28 +601,20 @@ Write The Chronicle following these rules exactly:
 - Do NOT mention dice rolls or game mechanics. Translate everything into story.
 - Output ONLY the chronicle text. No headers, labels, or JSON.`;
 
-  const response = await fetch(API_URL, {
-    method: 'POST',
-    headers: {
-      'Content-Type': 'application/json',
-      'x-api-key': API_KEY,
-      'anthropic-version': '2023-06-01',
-    },
-    body: JSON.stringify({
-      model: SUMMARY_MODEL,
-      max_tokens: 400,
-      messages: [{ role: 'user', content: prompt }],
-    }),
-  });
+  const summary = await callModel({
+    systemPrompt: 'You are a skilled fantasy story chronicler.',
+    messages: [{ role: 'user', content: prompt }],
+    model: SUMMARY_MODEL,
+    maxTokens: 400,
+  }).then(t => t.trim() || 'The tale is not yet written.').catch(() => 'The tale is not yet written.');
 
-  if (!response.ok) throw new Error('Summary generation failed');
-  const data = await response.json();
-  const summary = data.content?.[0]?.text?.trim() || 'The tale is not yet written.';
+  // Generate epithet and campaign memory in parallel
+  const [epithet, campaignMemory] = await Promise.all([
+    generateEpithet({ character, sessionFlags }).catch(() => 'The Adventurer'),
+    generateCampaignMemory({ character, campaign, sessionFlags, npcMemory }).catch(() => null),
+  ]);
 
-  // Generate epithet in parallel-ish (fire after summary, same session)
-  const epithet = await generateEpithet({ character, sessionFlags }).catch(() => 'The Adventurer');
-
-  return { summary, epithet };
+  return { summary, epithet, campaignMemory };
 }
 
 // ─── Epithet Generator ────────────────────────────────────────────────────────
@@ -496,21 +633,10 @@ Rules:
 - Avoid generic words like "brave", "strong", "wise" unless highly specific context demands it.
 - Output ONLY the epithet. Nothing else.`;
 
-  const response = await fetch(API_URL, {
-    method: 'POST',
-    headers: {
-      'Content-Type': 'application/json',
-      'x-api-key': API_KEY,
-      'anthropic-version': '2023-06-01',
-    },
-    body: JSON.stringify({
-      model: SUMMARY_MODEL,
-      max_tokens: 20,
-      messages: [{ role: 'user', content: prompt }],
-    }),
-  });
-
-  if (!response.ok) return 'The Adventurer';
-  const data = await response.json();
-  return data.content?.[0]?.text?.trim() || 'The Adventurer';
+  return callModel({
+    systemPrompt: 'You are a fantasy epithet generator. Output only the epithet.',
+    messages: [{ role: 'user', content: prompt }],
+    model: SUMMARY_MODEL,
+    maxTokens: 20,
+  }).then(t => t.trim() || 'The Adventurer').catch(() => 'The Adventurer');
 }

@@ -1,5 +1,6 @@
 import React, { createContext, useContext, useReducer, useEffect, useRef } from 'react';
 import { saveGame } from '../utils/storage';
+import { generateRollingSummary } from '../utils/claude';
 
 const initialState = {
   campaign: null,
@@ -54,6 +55,16 @@ const initialState = {
     used_item_names: [],
   },
   rollingSummary: null,
+
+  // ── Entity registry — richer per-entity data extracted after each DM call ────
+  entityRegistry: {
+    npcs: [],       // [{ name, race, disposition, notes }]
+    locations: [],  // [{ name, notes }]
+    items: [],      // [{ name }]
+  },
+
+  // ── Cross-session persistent memory — generated at Chronicle Card, injected at session start ──
+  campaignMemory: null,
 };
 
 function gameReducer(state, action) {
@@ -72,6 +83,7 @@ function gameReducer(state, action) {
         uiMessages: [],
         sessionFlags: {},
         npcMemory: [],
+        entityRegistry: { npcs: [], locations: [], items: [] },
       };
     case 'ADD_UI_MESSAGE':
       return {
@@ -245,13 +257,42 @@ function gameReducer(state, action) {
     case 'SET_ROLLING_SUMMARY':
       return { ...state, rollingSummary: action.payload };
 
+    case 'UPDATE_ENTITY_REGISTRY': {
+      const { npcs = [], locations = [], items = [] } = action.payload;
+      const upsert = (arr, incoming) => {
+        const result = [...arr];
+        for (const entry of incoming) {
+          const idx = result.findIndex(x => x.name === entry.name);
+          if (idx >= 0) result[idx] = { ...result[idx], ...entry };
+          else result.push(entry);
+        }
+        return result;
+      };
+      return {
+        ...state,
+        entityRegistry: {
+          npcs: upsert(state.entityRegistry.npcs, npcs),
+          locations: upsert(state.entityRegistry.locations, locations),
+          items: upsert(state.entityRegistry.items, items),
+        },
+      };
+    }
+
+    case 'SET_CAMPAIGN_MEMORY':
+      return { ...state, campaignMemory: action.payload };
+
     case 'ADD_TO_INVENTORY':
       return {
         ...state,
         character: { ...state.character, inventory: [...state.character.inventory, action.payload] },
       };
     case 'SET_SESSION_SUMMARY':
-      return { ...state, sessionSummary: action.payload.summary, epithet: action.payload.epithet };
+      return {
+        ...state,
+        sessionSummary: action.payload.summary,
+        epithet: action.payload.epithet,
+        ...(action.payload.campaignMemory != null ? { campaignMemory: action.payload.campaignMemory } : {}),
+      };
     case 'END_SESSION':
       return { ...state, isSessionActive: false };
     case 'RESET_GAME':
@@ -281,6 +322,27 @@ export function GameProvider({ children }) {
     return () => clearTimeout(autoSaveTimer.current);
   }, [state.uiMessages, state.character, state.sessionFlags, state.npcMemory]);
 
+  // ── Rolling summary — fires every 15 player turns (25 for tutorial first trigger) ──
+  useEffect(() => {
+    const count = state.sessionMessageCount;
+    if (!state.isSessionActive || count === 0 || !state.campaign || !state.character?.name) return;
+    const isTutorial = state.campaign.tutorial_beats?.length > 0;
+    const firstTrigger = isTutorial ? 25 : 15;
+    const isFirstTrigger = count === firstTrigger;
+    const isRecurringTrigger = count > firstTrigger && (count - firstTrigger) % 15 === 0;
+    if (!isFirstTrigger && !isRecurringTrigger) return;
+
+    generateRollingSummary({
+      character: state.character,
+      campaign: state.campaign,
+      messages: state.uiMessages,
+      sessionFlags: state.sessionFlags,
+      existingSummary: state.rollingSummary,
+    }).then(summary => {
+      if (summary) dispatch({ type: 'SET_ROLLING_SUMMARY', payload: summary });
+    }).catch(() => {});
+  }, [state.sessionMessageCount]); // eslint-disable-line react-hooks/exhaustive-deps
+
   // ── Action creators ────────────────────────────────────────────────────────
   const setCampaign = (campaign, persona) =>
     dispatch({ type: 'SET_CAMPAIGN', payload: { campaign, persona } });
@@ -294,8 +356,12 @@ export function GameProvider({ children }) {
   const upsertNPC = (npc) => dispatch({ type: 'UPSERT_NPC', payload: npc });
   const updateHP = (newHP) => dispatch({ type: 'UPDATE_CHARACTER_HP', payload: newHP });
   const addToInventory = (item) => dispatch({ type: 'ADD_TO_INVENTORY', payload: item });
-  const setSessionSummary = (summary, epithet) =>
-    dispatch({ type: 'SET_SESSION_SUMMARY', payload: { summary, epithet } });
+  const setSessionSummary = (summary, epithet, campaignMemory = null) =>
+    dispatch({ type: 'SET_SESSION_SUMMARY', payload: { summary, epithet, campaignMemory } });
+  const updateEntityRegistry = (updates) =>
+    dispatch({ type: 'UPDATE_ENTITY_REGISTRY', payload: updates });
+  const setCampaignMemory = (memory) =>
+    dispatch({ type: 'SET_CAMPAIGN_MEMORY', payload: memory });
   const endSession = () => dispatch({ type: 'END_SESSION' });
   const resetGame = () => dispatch({ type: 'RESET_GAME' });
 
@@ -364,6 +430,9 @@ export function GameProvider({ children }) {
         // World registry & summary
         updateWorldRegistry,
         setRollingSummary,
+        // Entity registry & campaign memory
+        updateEntityRegistry,
+        setCampaignMemory,
       }}
     >
       {children}
