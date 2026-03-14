@@ -1,3 +1,4 @@
+import './src/utils/threeSetup'; // DOM polyfills for three.js — must be first
 import { registerRootComponent } from 'expo';
 
 import App from './App';

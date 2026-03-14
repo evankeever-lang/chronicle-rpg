@@ -1,5 +1,5 @@
 import React, { createContext, useContext, useReducer, useEffect, useRef } from 'react';
-import { saveGame } from '../utils/storage';
+import { saveGame, savePreferences, loadPreferences } from '../utils/storage';
 import { generateRollingSummary } from '../utils/claude';
 
 const initialState = {
@@ -65,6 +65,23 @@ const initialState = {
 
   // ── Cross-session persistent memory — generated at Chronicle Card, injected at session start ──
   campaignMemory: null,
+
+  // ── Aranthos world tracking — dynamic, persisted across sessions ──────────────
+  worldReputations: {
+    crown: 0,
+    iron_compact: 0,
+    thornbound: 0,
+    deep_accord: 0,
+    crimson_veil: 0,
+    ashen_circle: 0,
+    broken_chain: 0,
+  },
+  visitedLocations: [],   // array of location id strings
+  npcDispositions: {},    // { npc_id: integer delta } added to NPC_TEMPLATES.disposition_default
+  mainPlotStage: 'hidden', // 'hidden' | 'stirring' | 'fracturing' | 'breaking' | 'resolved'
+
+  // ── User preferences ──────────────────────────────────────────────────────────
+  preferences: { diceSkin: 'default', masterVolume: 80, musicVolume: 70, sfxVolume: 80 },
 };
 
 function gameReducer(state, action) {
@@ -281,6 +298,42 @@ function gameReducer(state, action) {
     case 'SET_CAMPAIGN_MEMORY':
       return { ...state, campaignMemory: action.payload };
 
+    // ── Aranthos world tracking ───────────────────────────────────────────────
+    case 'UPDATE_WORLD_REPUTATION': {
+      const { faction, delta } = action.payload;
+      if (!(faction in state.worldReputations)) return state;
+      return {
+        ...state,
+        worldReputations: {
+          ...state.worldReputations,
+          [faction]: Math.max(-5, Math.min(5, state.worldReputations[faction] + delta)),
+        },
+      };
+    }
+
+    case 'VISIT_LOCATION': {
+      if (state.visitedLocations.includes(action.payload)) return state;
+      return { ...state, visitedLocations: [...state.visitedLocations, action.payload] };
+    }
+
+    case 'UPDATE_NPC_DISPOSITION': {
+      const { npcId, delta } = action.payload;
+      const current = state.npcDispositions[npcId] || 0;
+      return {
+        ...state,
+        npcDispositions: { ...state.npcDispositions, [npcId]: current + delta },
+      };
+    }
+
+    case 'SET_PLOT_STAGE':
+      return { ...state, mainPlotStage: action.payload };
+
+    case 'SET_DICE_SKIN':
+      return { ...state, preferences: { ...state.preferences, diceSkin: action.payload } };
+
+    case 'SET_PREFERENCES':
+      return { ...state, preferences: { ...state.preferences, ...action.payload } };
+
     case 'ADD_TO_INVENTORY':
       return {
         ...state,
@@ -298,8 +351,10 @@ function gameReducer(state, action) {
     case 'RESET_GAME':
       return initialState;
     // Restore a full saved game state (e.g. from "Continue" on main menu)
+    // Preserve in-memory preferences — they are saved/loaded separately and must
+    // not be overwritten by the game save (which predates the preferences field).
     case 'LOAD_GAME':
-      return { ...initialState, ...action.payload, isSessionActive: true };
+      return { ...initialState, ...action.payload, isSessionActive: true, preferences: state.preferences };
     default:
       return state;
   }
@@ -309,6 +364,18 @@ const GameContext = createContext(null);
 
 export function GameProvider({ children }) {
   const [state, dispatch] = useReducer(gameReducer, initialState);
+
+  // ── Load persisted preferences on mount ────────────────────────────────────
+  useEffect(() => {
+    loadPreferences().then(saved => {
+      if (saved) dispatch({ type: 'SET_PREFERENCES', payload: saved });
+    });
+  }, []); // eslint-disable-line react-hooks/exhaustive-deps
+
+  // ── Persist preferences immediately whenever they change ───────────────────
+  useEffect(() => {
+    savePreferences(state.preferences);
+  }, [state.preferences]);
 
   // ── Auto-save whenever the conversation progresses ─────────────────────────
   // We debounce slightly so rapid dispatches don't hammer the filesystem.
@@ -362,6 +429,8 @@ export function GameProvider({ children }) {
     dispatch({ type: 'UPDATE_ENTITY_REGISTRY', payload: updates });
   const setCampaignMemory = (memory) =>
     dispatch({ type: 'SET_CAMPAIGN_MEMORY', payload: memory });
+  const setDiceSkin = (skin) => dispatch({ type: 'SET_DICE_SKIN', payload: skin });
+  const setPreferences = (updates) => dispatch({ type: 'SET_PREFERENCES', payload: updates });
   const endSession = () => dispatch({ type: 'END_SESSION' });
   const resetGame = () => dispatch({ type: 'RESET_GAME' });
 
@@ -395,6 +464,16 @@ export function GameProvider({ children }) {
     dispatch({ type: 'UPDATE_WORLD_REGISTRY', payload: updates });
   const setRollingSummary = (summary) =>
     dispatch({ type: 'SET_ROLLING_SUMMARY', payload: summary });
+
+  // ── Aranthos world tracking ───────────────────────────────────────────────────
+  const updateWorldReputation = (faction, delta) =>
+    dispatch({ type: 'UPDATE_WORLD_REPUTATION', payload: { faction, delta } });
+  const visitLocation = (locationId) =>
+    dispatch({ type: 'VISIT_LOCATION', payload: locationId });
+  const updateNpcDisposition = (npcId, delta) =>
+    dispatch({ type: 'UPDATE_NPC_DISPOSITION', payload: { npcId, delta } });
+  const setPlotStage = (stage) =>
+    dispatch({ type: 'SET_PLOT_STAGE', payload: stage });
 
   return (
     <GameContext.Provider
@@ -433,6 +512,14 @@ export function GameProvider({ children }) {
         // Entity registry & campaign memory
         updateEntityRegistry,
         setCampaignMemory,
+        // Aranthos world tracking
+        updateWorldReputation,
+        visitLocation,
+        updateNpcDisposition,
+        setPlotStage,
+        // Preferences
+        setDiceSkin,
+        setPreferences,
       }}
     >
       {children}

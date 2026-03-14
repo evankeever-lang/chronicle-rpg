@@ -13,12 +13,14 @@ import DMMessage from '../components/DMMessage';
 import DiceRoller from '../components/DiceRoller';
 import ChronicleCard from '../components/ChronicleCard';
 import CombatHUD, { EnemyZone, CombatLogStrip } from '../components/CombatHUD';
+import SettingsModal from '../components/SettingsModal';
 import {
   rollInitiative, initializeEnemies, resolveAttack, rollDamage,
   rollDeathSave, buildCombatSummary, formatPlayerAttack, formatEnemyTurn, getPlayerCombatProfile,
 } from '../utils/combat';
 import { getAbilityModifier, roll } from '../utils/dice';
 import { COLORS, FONTS, FONT_SIZES, SPACING, RADIUS } from '../constants/theme';
+import { stopMenuMusic } from '../utils/menuMusic';
 
 const PERSONA_TYPING = {
   chronicler: 'Inscribing the record…',
@@ -75,11 +77,19 @@ export default function DMConversationScreen({ navigation }) {
     // Audio / art
     setTone,
     setSceneTag,
+    // World registry & campaign memory
+    worldRegistry,
+    campaignMemory,
+    // Preferences
+    preferences,
   } = game;
 
   const [isLoading, setLoading] = useState(false);
   const [historyVisible, setHistoryVisible] = useState(false);
   const [charSheetVisible, setCharSheetVisible] = useState(false);
+
+  // ── Stop menu music when session starts ───────────────────────────────────────
+  useEffect(() => { stopMenuMusic({ fade: true }); }, []);
 
   // ── Save & Exit ───────────────────────────────────────────────────────────────
   // Flag lets our own button bypass the beforeRemove confirmation.
@@ -435,6 +445,7 @@ export default function DMConversationScreen({ navigation }) {
         messages: apiMessages,
         character, campaign: selectedCampaign, persona: selectedPersona,
         messageCount: playerTurnCount.current, sessionFlags,
+        worldRegistry, campaignMemory,
       });
       addMessage({
         id: `dm_${Date.now()}`, role: 'assistant', content: dmResponse,
@@ -467,6 +478,7 @@ export default function DMConversationScreen({ navigation }) {
   const [pendingCombatRoll, setPendingCombatRoll] = useState(null); // null | { type: 'initiative', enemies } | { type: 'attack', targetEnemy }
   const [waitingForInitiative, setWaitingForInitiative] = useState(false);
   const [combatEndBanner, setCombatEndBanner] = useState(null);
+  const [settingsVisible, setSettingsVisible] = useState(false);
 
   // ── Player-turn message counter (only counts what player sends) ─────────────
   const playerTurnCount = useRef(0);
@@ -559,6 +571,7 @@ export default function DMConversationScreen({ navigation }) {
         messages: [{ role: 'user', content: openingMsg.content }],
         character, campaign: selectedCampaign, persona: selectedPersona,
         messageCount: 1, sessionFlags, tutorialBeatInstruction: beatInstruction,
+        worldRegistry, campaignMemory,
       });
 
       addMessage({
@@ -635,6 +648,7 @@ export default function DMConversationScreen({ navigation }) {
         character, campaign: selectedCampaign, persona: selectedPersona,
         messageCount: playerTurnCount.current, sessionFlags,
         tutorialBeatInstruction: beatInstruction || limitInstruction,
+        worldRegistry, campaignMemory,
       });
 
       addMessage({
@@ -775,6 +789,9 @@ export default function DMConversationScreen({ navigation }) {
           </View>
         </View>
         <View style={styles.hudRight}>
+          <TouchableOpacity style={styles.hudSettingsBtn} onPress={() => setSettingsVisible(true)} hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}>
+            <Text style={styles.hudSettingsText}>⚙</Text>
+          </TouchableOpacity>
           <Text style={[styles.hudHp, { color: hpColor }]}>{character?.currentHP}/{character?.maxHP} HP</Text>
           <View style={styles.hpBarBg}>
             <View style={[styles.hpBarFill, { width: `${hpPct * 100}%`, backgroundColor: hpColor }]} />
@@ -1094,7 +1111,7 @@ export default function DMConversationScreen({ navigation }) {
         <DiceRoller
           visible={diceVisible}
           onRollComplete={handleRollComplete}
-          requiredRoll={pendingRoll}
+          requiredRoll={pendingCombatRoll ? null : pendingRoll}
           character={character}
           isPeeking={isPeeking}
           onPeekToggle={() => setIsPeeking(p => !p)}
@@ -1105,9 +1122,14 @@ export default function DMConversationScreen({ navigation }) {
             : pendingRoll?.skill ? `${pendingRoll.skill} Check`
             : null
           }
-          requiredSides={pendingCombatRoll?.type === 'damage' ? pendingCombatRoll?.damageSides : undefined}
+          requiredSides={
+            pendingCombatRoll?.type === 'damage' ? pendingCombatRoll?.damageSides
+            : pendingCombatRoll?.type ? 20
+            : undefined
+          }
           hasAdvantage={rollHasAdvantage}
           hasDisadvantage={rollHasDisadvantage}
+          selectedSkin={preferences?.diceSkin || 'default'}
         />
       )}
 
@@ -1225,6 +1247,8 @@ export default function DMConversationScreen({ navigation }) {
           />
         </Modal>
       )}
+
+      <SettingsModal visible={settingsVisible} onClose={() => setSettingsVisible(false)} />
     </SafeAreaView>
   );
 }
@@ -1241,6 +1265,8 @@ const styles = StyleSheet.create({
   hudName: { color: COLORS.textPrimary, fontSize: 13, fontWeight: '700' },
   hudSub: { color: COLORS.textMuted, fontSize: 10 },
   hudRight: { alignItems: 'flex-end' },
+  hudSettingsBtn: { alignSelf: 'flex-end', marginBottom: 2 },
+  hudSettingsText: { fontSize: 14, color: COLORS.textMuted },
   hudHp: { fontSize: 12, fontWeight: '700' },
   hpBarBg: { width: 80, height: 4, backgroundColor: COLORS.border, borderRadius: 2, marginTop: 2, marginBottom: 2, overflow: 'hidden' },
   hpBarFill: { height: '100%', borderRadius: 2 },

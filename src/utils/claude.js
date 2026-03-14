@@ -81,7 +81,7 @@ async function callModel({ systemPrompt, messages, model, maxTokens, useCache = 
 
 // ─── System Prompt Builder ────────────────────────────────────────────────────
 
-export function buildSystemPrompt(character, campaign, persona, sessionFlags, npcMemory, beatInjection = null, campaignMemory = null) {
+export function buildSystemPrompt(character, campaign, persona, sessionFlags, npcMemory, beatInjection = null, campaignMemory = null, worldRegistry = null) {
   // ── Static block (persona + rules + campaign — cached per session) ──────────
   const staticBlock = `${persona.systemPersona}
 
@@ -188,7 +188,11 @@ For other system events, set the "system" field:
 If the player does something that should set a story flag, add it to state_updates.flags.
 If an NPC's status changes, add them to state_updates.npc_updates.
 If the player takes or heals damage, set state_updates.hp_change to the integer delta (negative = damage).
-If loot is found, set state_updates.loot to a loot system object.`.trim();
+If loot is found, set state_updates.loot to a loot system object.${
+  campaign.name_pool?.length
+    ? `\n\n## Name Pool — draw ALL new NPC names from this list only\n${campaign.name_pool.slice(0, 25).join(', ')}`
+    : ''
+}`.trim();
 
   // ── Dynamic block (character state + flags + NPCs + beat — fresh each call) ─
   const characterBlock = `## Active Character\n${JSON.stringify({
@@ -217,7 +221,15 @@ If loot is found, set state_updates.loot to a loot system object.`.trim();
     ? `## Prior Session Memory\n${campaignMemory}`
     : null;
 
-  const dynamicBlock = [characterBlock, stateBlock, npcBlock, campaignMemoryBlock, beatBlock].filter(Boolean).join('\n\n');
+  const worldRegistryBlock = worldRegistry &&
+    (worldRegistry.used_npc_names?.length > 0 || worldRegistry.used_location_names?.length > 0)
+    ? `## World Registry — names already in use (NEVER reuse these as new NPC names)\n${JSON.stringify({
+        npc_names: worldRegistry.used_npc_names,
+        location_names: worldRegistry.used_location_names,
+      })}`
+    : null;
+
+  const dynamicBlock = [characterBlock, stateBlock, npcBlock, campaignMemoryBlock, worldRegistryBlock, beatBlock].filter(Boolean).join('\n\n');
 
   return { staticBlock, dynamicBlock };
 }
@@ -309,8 +321,9 @@ export async function sendDMMessage({
   npcMemory,
   beatInjection = null,
   campaignMemory = null,
+  worldRegistry = null,
 }) {
-  const { staticBlock, dynamicBlock } = buildSystemPrompt(character, campaign, persona, sessionFlags, npcMemory, beatInjection, campaignMemory);
+  const { staticBlock, dynamicBlock } = buildSystemPrompt(character, campaign, persona, sessionFlags, npcMemory, beatInjection, campaignMemory, worldRegistry);
 
   const messages = [
     ...conversationHistory.slice(-20),
@@ -407,6 +420,7 @@ export async function callDM({
   npcMemory = [],
   tutorialBeatInstruction = null,
   campaignMemory = null,
+  worldRegistry = null,
 }) {
   // messages is the full history including the new user turn at the end
   const history = messages.slice(0, -1);
@@ -427,6 +441,7 @@ export async function callDM({
     npcMemory: npcMemory || [],
     beatInjection: tutorialBeatInstruction,
     campaignMemory: campaignMemory || null,
+    worldRegistry: worldRegistry || null,
   });
 
   // npc_dialogue: pass full array; DMMessage handles multiple speakers

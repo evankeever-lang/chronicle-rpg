@@ -1,137 +1,213 @@
 import React, { useState, useEffect } from 'react';
-import { View, Text, ScrollView, TouchableOpacity, StyleSheet, SafeAreaView, Image } from 'react-native';
+import SettingsModal from '../components/SettingsModal';
+import {
+  View, Text, ScrollView, TouchableOpacity, StyleSheet,
+  SafeAreaView, Image, ImageBackground,
+} from 'react-native';
 import { LinearGradient } from 'expo-linear-gradient';
-import { CAMPAIGNS } from '../constants/campaigns';
+import { CAMPAIGNS, SPAWN_POINTS, getCampaignById } from '../constants/campaigns';
 import { getDefaultPersonaForCampaign, getPersonaById } from '../constants/personas';
 import { useGame } from '../context/GameContext';
 import { loadProgress } from '../utils/progress';
 import { COLORS, FONTS, FONT_SIZES, SPACING, RADIUS, SHADOWS } from '../constants/theme';
-import { CampaignArt } from '../assets';
+import { SpawnArt, CampaignArt } from '../assets';
+
+// Region accent colours — used as gradient fallback when spawn art is not yet set
+const REGION_COLORS = {
+  heartlands:     ['#3D2E0A', '#1C160A'],
+  tidebreak_coast:['#0A1F2E', '#080E14'],
+  ashpeaks:       ['#1E1E2A', '#0E0E14'],
+  lowfen:         ['#0E1F0E', '#080F08'],
+  scorched_reach: ['#2E1206', '#140903'],
+  thornwood:      ['#0A1A0A', '#060C06'],
+  emberveil:      ['#2A0A0A', '#120606'],
+};
 
 const DIFFICULTY_COLORS = {
   Introduction: COLORS.success,
-  Standard: COLORS.warning,
-  Challenging: COLORS.danger,
-  Variable: COLORS.textSecondary,
-};
-
-const GENRE_EMOJIS = {
-  Tutorial: '📖',
-  'Epic Quest': '⚔️',
-  'Dungeon Crawl': '🏚️',
-  Random: '🎲',
-  Mystery: '🔍',
-  Horror: '🌑',
+  Standard:     COLORS.warning,
+  Challenging:  COLORS.danger,
+  Variable:     COLORS.textSecondary,
 };
 
 export default function CampaignSelectScreen({ navigation }) {
   const { setCampaign } = useGame();
   const [tutorialCompleted, setTutorialCompleted] = useState(false);
+  const [settingsVisible, setSettingsVisible] = useState(false);
 
   useEffect(() => {
     loadProgress().then(p => setTutorialCompleted(!!p.tutorialCompleted));
   }, []);
 
-  const handleSelectCampaign = (campaign) => {
-    const personaId = getDefaultPersonaForCampaign(campaign.id);
-    const persona = getPersonaById(personaId);
-    setCampaign(campaign, persona);
+  // Tutorial tap — sets tutorial campaign and navigates to CharacterCreation
+  const handleTutorial = () => {
+    const tutorial = getCampaignById('tutorial');
+    const persona = getPersonaById(getDefaultPersonaForCampaign('tutorial'));
+    setCampaign(tutorial, persona);
+    navigation.navigate('CharacterCreation');
+  };
+
+  // Spawn point tap — builds an epic_quest variant with an opening directive
+  const handleSelectSpawn = (spawnPoint) => {
+    const baseNonRandom = SPAWN_POINTS.filter(sp => !sp.isRandom);
+
+    // Random: pick one of the 9 real spawn points at random
+    const resolved = spawnPoint.isRandom
+      ? baseNonRandom[Math.floor(Math.random() * baseNonRandom.length)]
+      : spawnPoint;
+
+    const epicQuest = getCampaignById('epic_quest');
+    const campaignVariant = {
+      ...epicQuest,
+      startingLocation: resolved.locationId,
+      startingLocationName: resolved.name,
+      dmBrief: `${resolved.dmOpeningDirective}\n\n---\n\n${epicQuest.dmBrief}`,
+    };
+
+    const persona = getPersonaById(getDefaultPersonaForCampaign('epic_quest'));
+    setCampaign(campaignVariant, persona);
     navigation.navigate('CharacterCreation');
   };
 
   return (
     <SafeAreaView style={styles.safe}>
-      <LinearGradient
-        colors={[COLORS.background, '#110E08']}
-        style={StyleSheet.absoluteFill}
-      />
+      <LinearGradient colors={[COLORS.background, '#0A0806']} style={StyleSheet.absoluteFill} />
+
       <ScrollView contentContainerStyle={styles.scroll} showsVerticalScrollIndicator={false}>
 
         {/* Header */}
         <View style={styles.header}>
-          <Text style={styles.headerEpigraph}>⚔  Project Chronicle  ⚔</Text>
-          <Text style={styles.headerTitle}>Choose Your Path</Text>
-          <Text style={styles.headerSub}>Select a campaign to begin your adventure</Text>
+          <TouchableOpacity
+            style={styles.headerBack}
+            onPress={() => navigation.goBack()}
+            hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
+          >
+            <Text style={styles.headerBackText}>←</Text>
+          </TouchableOpacity>
+          <View style={styles.headerCenter}>
+            <Text style={styles.headerEpigraph}>⚔  Araxys  ⚔</Text>
+            <Text style={styles.headerTitle}>Where do you begin?</Text>
+            <Text style={styles.headerSub}>Choose your first step into the Kingdom of Aranthos</Text>
+          </View>
+          <TouchableOpacity
+            style={styles.headerSettings}
+            onPress={() => setSettingsVisible(true)}
+            hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
+          >
+            <Text style={styles.headerSettingsText}>⚙</Text>
+          </TouchableOpacity>
         </View>
 
-        {/* Campaign cards */}
-        {CAMPAIGNS.map((campaign) => {
-          const locked = !campaign.isTutorial && !tutorialCompleted;
-          return (
-            <CampaignCard
-              key={campaign.id}
-              campaign={campaign}
-              locked={locked}
-              onPress={locked ? undefined : () => handleSelectCampaign(campaign)}
-            />
-          );
-        })}
+        {/* Tutorial banner — always accessible, separated from main grid */}
+        <TutorialBanner onPress={handleTutorial} />
+
+        {/* Section label */}
+        <View style={styles.sectionRow}>
+          <Text style={styles.sectionLabel}>Spawn Points</Text>
+          {!tutorialCompleted && (
+            <Text style={styles.sectionLocked}>Complete the tutorial to unlock</Text>
+          )}
+        </View>
+
+        {/* Spawn point cards */}
+        {SPAWN_POINTS.map((sp) => (
+          <SpawnCard
+            key={sp.id}
+            spawnPoint={sp}
+            locked={!tutorialCompleted}
+            onPress={tutorialCompleted ? () => handleSelectSpawn(sp) : undefined}
+          />
+        ))}
 
         <View style={styles.footer}>
-          <Text style={styles.footerText}>More campaigns coming in future seasons</Text>
+          <Text style={styles.footerText}>More regions coming in future seasons</Text>
         </View>
       </ScrollView>
+
+      <SettingsModal visible={settingsVisible} onClose={() => setSettingsVisible(false)} />
     </SafeAreaView>
   );
 }
 
-function CampaignCard({ campaign, locked, onPress }) {
-  const personaId = getDefaultPersonaForCampaign(campaign.id);
-  const persona = getPersonaById(personaId);
+// ─── Tutorial Banner ──────────────────────────────────────────────────────────
+
+function TutorialBanner({ onPress }) {
+  const tutorial = getCampaignById('tutorial');
+  return (
+    <TouchableOpacity style={styles.tutorialBanner} onPress={onPress} activeOpacity={0.85}>
+      {CampaignArt.tutorial && (
+        <Image source={CampaignArt.tutorial} style={styles.tutorialBannerArt} resizeMode="cover" />
+      )}
+      <LinearGradient
+        colors={['transparent', 'rgba(0,0,0,0.82)']}
+        style={StyleSheet.absoluteFill}
+      />
+      <View style={styles.tutorialBannerInner}>
+        <View style={styles.tutorialBadge}>
+          <Text style={styles.tutorialBadgeText}>New to Chronicle?</Text>
+        </View>
+        <Text style={styles.tutorialBannerTitle}>{tutorial.title}</Text>
+        <Text style={styles.tutorialBannerDesc}>{tutorial.description}</Text>
+        <Text style={styles.tutorialCTA}>Begin Tutorial →</Text>
+      </View>
+    </TouchableOpacity>
+  );
+}
+
+// ─── Spawn Point Card ─────────────────────────────────────────────────────────
+
+function SpawnCard({ spawnPoint, locked, onPress }) {
+  const art = SpawnArt[spawnPoint.id];
+  const gradientColors = REGION_COLORS[spawnPoint.regionId] || ['#1A1208', '#0A0806'];
 
   return (
     <TouchableOpacity
-      style={styles.card}
+      style={[styles.card, locked && styles.cardLocked]}
       onPress={onPress}
       activeOpacity={locked ? 1 : 0.85}
       disabled={locked}
     >
-      {CampaignArt[campaign.id] && (
-        <Image source={CampaignArt[campaign.id]} style={styles.cardBanner} resizeMode="cover" />
-      )}
-      <View style={styles.cardInner}>
-        {/* Genre row + badges */}
-        <View style={styles.cardTopRow}>
-          <View style={styles.genreTag}>
-            <Text style={styles.genreEmoji}>{GENRE_EMOJIS[campaign.genre] || '📜'}</Text>
-            <Text style={styles.genreText}>{campaign.genre}</Text>
+      {/* Art / gradient banner */}
+      <View style={styles.cardBannerWrap}>
+        {art ? (
+          <ImageBackground source={art} style={styles.cardBanner} resizeMode="cover">
+            <LinearGradient
+              colors={['transparent', 'rgba(0,0,0,0.65)']}
+              style={StyleSheet.absoluteFill}
+            />
+            <CardBannerOverlay spawnPoint={spawnPoint} locked={locked} />
+          </ImageBackground>
+        ) : (
+          <LinearGradient colors={gradientColors} style={styles.cardBanner}>
+            <CardBannerOverlay spawnPoint={spawnPoint} locked={locked} />
+          </LinearGradient>
+        )}
+      </View>
+
+      {/* Card body */}
+      <View style={styles.cardBody}>
+        <Text style={styles.cardTagline}>{spawnPoint.tagline}</Text>
+        <View style={styles.cardMeta}>
+          <View style={[styles.diffBadge, { borderColor: DIFFICULTY_COLORS[spawnPoint.difficulty] || COLORS.textMuted }]}>
+            <Text style={[styles.diffText, { color: DIFFICULTY_COLORS[spawnPoint.difficulty] || COLORS.textMuted }]}>
+              {spawnPoint.difficulty}
+            </Text>
           </View>
-          {campaign.isTutorial && (
-            <View style={styles.tutorialBadge}>
-              <Text style={styles.tutorialBadgeText}>Start Here</Text>
-            </View>
+          {!spawnPoint.isRandom && (
+            <Text style={styles.regionChip}>{spawnPoint.region}</Text>
           )}
-        </View>
-
-        <Text style={styles.cardTitle}>{campaign.title}</Text>
-        <Text style={styles.cardDescription}>{campaign.description}</Text>
-
-        {/* Tags */}
-        <View style={styles.tagsRow}>
-          <Tag label={campaign.tone} />
-          <Tag label={campaign.estimatedLength} dimmed />
-          <Tag label={campaign.difficulty} color={DIFFICULTY_COLORS[campaign.difficulty]} />
-        </View>
-
-        {/* DM Persona */}
-        <View style={styles.personaRow}>
-          <Text style={styles.personaLabel}>DM: </Text>
-          <Text style={styles.personaName}>{persona.name}</Text>
-          <Text style={styles.personaTone}> · {persona.title}</Text>
         </View>
       </View>
 
-      {/* CTA footer */}
+      {/* CTA / locked footer */}
       {locked ? (
         <View style={styles.lockedFooter}>
-          <Text style={styles.lockedFooterText}>
-            Complete the tutorial to unlock
-          </Text>
+          <Text style={styles.lockedFooterText}>Complete the tutorial to unlock</Text>
         </View>
       ) : (
         <View style={styles.cardCTA}>
           <Text style={styles.cardCTAText}>
-            {campaign.isRandom ? 'Spin the Tale →' : 'Begin Adventure →'}
+            {spawnPoint.isRandom ? 'Let Fate Decide →' : 'Begin Here →'}
           </Text>
         </View>
       )}
@@ -139,25 +215,41 @@ function CampaignCard({ campaign, locked, onPress }) {
   );
 }
 
-function Tag({ label, color, dimmed }) {
+function CardBannerOverlay({ spawnPoint, locked }) {
   return (
-    <View style={[styles.tag, dimmed && styles.tagDimmed]}>
-      <Text style={[styles.tagText, color && { color }, dimmed && styles.tagTextDimmed]}>
-        {label}
-      </Text>
+    <View style={styles.bannerOverlay}>
+      <View style={styles.bannerTop}>
+        {spawnPoint.isRandom ? (
+          <Text style={styles.bannerIcon}>🎲</Text>
+        ) : (
+          <Text style={styles.cityChip}>{spawnPoint.city}</Text>
+        )}
+        {locked && <Text style={styles.lockIcon}>🔒</Text>}
+      </View>
+      <Text style={styles.bannerTitle}>{spawnPoint.name}</Text>
     </View>
   );
 }
 
+// ─── Styles ───────────────────────────────────────────────────────────────────
+
 const styles = StyleSheet.create({
-  safe: { flex: 1, backgroundColor: COLORS.background },
+  safe:   { flex: 1, backgroundColor: COLORS.background },
   scroll: { paddingHorizontal: SPACING.md, paddingBottom: SPACING.xxl },
 
+  // Header
   header: {
     paddingTop: SPACING.xl,
     paddingBottom: SPACING.lg,
-    alignItems: 'center',
+    paddingHorizontal: SPACING.md,
+    flexDirection: 'row',
+    alignItems: 'flex-start',
   },
+  headerBack:      { width: 32, paddingTop: 2 },
+  headerBackText:  { fontSize: 22, color: COLORS.textSecondary },
+  headerCenter:    { flex: 1, alignItems: 'center' },
+  headerSettings:  { width: 32, alignItems: 'flex-end', paddingTop: 2 },
+  headerSettingsText: { fontSize: 18, color: COLORS.textMuted },
   headerEpigraph: {
     fontFamily: FONTS.sansSerif,
     fontSize: FONT_SIZES.xs,
@@ -175,11 +267,92 @@ const styles = StyleSheet.create({
   },
   headerSub: {
     fontFamily: FONTS.sansSerif,
-    fontSize: FONT_SIZES.md,
+    fontSize: FONT_SIZES.sm,
     color: COLORS.textSecondary,
+    marginTop: SPACING.xs,
+    textAlign: 'center',
+  },
+
+  // Tutorial banner
+  tutorialBanner: {
+    height: 130,
+    borderRadius: RADIUS.xl,
+    overflow: 'hidden',
+    marginBottom: SPACING.lg,
+    backgroundColor: COLORS.surface,
+    borderWidth: 1,
+    borderColor: COLORS.primaryDark,
+    ...SHADOWS.md,
+  },
+  tutorialBannerArt: {
+    ...StyleSheet.absoluteFillObject,
+  },
+  tutorialBannerInner: {
+    flex: 1,
+    padding: SPACING.lg,
+    justifyContent: 'flex-end',
+  },
+  tutorialBadge: {
+    alignSelf: 'flex-start',
+    backgroundColor: COLORS.primaryFaint,
+    borderWidth: 1,
+    borderColor: COLORS.primaryDark,
+    borderRadius: RADIUS.pill,
+    paddingHorizontal: SPACING.sm,
+    paddingVertical: 2,
+    marginBottom: SPACING.xs,
+  },
+  tutorialBadgeText: {
+    fontFamily: FONTS.sansSerif,
+    fontSize: FONT_SIZES.xs,
+    color: COLORS.primary,
+    fontWeight: '700',
+    letterSpacing: 0.5,
+  },
+  tutorialBannerTitle: {
+    fontFamily: FONTS.serif,
+    fontSize: FONT_SIZES.lg,
+    color: COLORS.textPrimary,
+    fontWeight: '700',
+  },
+  tutorialBannerDesc: {
+    fontFamily: FONTS.sansSerif,
+    fontSize: FONT_SIZES.sm,
+    color: COLORS.textSecondary,
+    marginTop: 2,
+  },
+  tutorialCTA: {
+    fontFamily: FONTS.sansSerif,
+    fontSize: FONT_SIZES.sm,
+    color: COLORS.primary,
+    fontWeight: '700',
     marginTop: SPACING.xs,
   },
 
+  // Section row
+  sectionRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    marginBottom: SPACING.md,
+    paddingHorizontal: SPACING.xs,
+  },
+  sectionLabel: {
+    fontFamily: FONTS.sansSerif,
+    fontSize: FONT_SIZES.xs,
+    color: COLORS.textMuted,
+    textTransform: 'uppercase',
+    letterSpacing: 2,
+    fontWeight: '600',
+  },
+  sectionLocked: {
+    fontFamily: FONTS.sansSerif,
+    fontSize: FONT_SIZES.xs,
+    color: COLORS.textMuted,
+    fontStyle: 'italic',
+  },
+
+  // Spawn card
   card: {
     backgroundColor: COLORS.surface,
     borderWidth: 1,
@@ -189,97 +362,78 @@ const styles = StyleSheet.create({
     overflow: 'hidden',
     ...SHADOWS.md,
   },
-  cardBanner: { width: '100%', height: 120 },
-  cardInner: { padding: SPACING.lg },
+  cardLocked: { opacity: 0.55 },
 
-  cardTopRow: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    justifyContent: 'space-between',
-    marginBottom: SPACING.sm,
+  cardBannerWrap: { width: '100%' },
+  cardBanner: {
+    width: '100%',
+    height: 110,
+    justifyContent: 'flex-end',
   },
-  genreTag: { flexDirection: 'row', alignItems: 'center', gap: 6 },
-  genreEmoji: { fontSize: 14 },
-  genreText: {
+
+  bannerOverlay: {
+    flex: 1,
+    padding: SPACING.md,
+    justifyContent: 'space-between',
+  },
+  bannerTop: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+  },
+  bannerTitle: {
+    fontFamily: FONTS.serif,
+    fontSize: FONT_SIZES.lg,
+    color: '#FFFFFF',
+    fontWeight: '700',
+    textShadowColor: 'rgba(0,0,0,0.8)',
+    textShadowOffset: { width: 0, height: 1 },
+    textShadowRadius: 4,
+  },
+  cityChip: {
     fontFamily: FONTS.sansSerif,
     fontSize: FONT_SIZES.xs,
-    color: COLORS.textSecondary,
+    color: 'rgba(255,255,255,0.75)',
     textTransform: 'uppercase',
     letterSpacing: 1,
     fontWeight: '600',
   },
-  tutorialBadge: {
-    backgroundColor: COLORS.primaryFaint,
-    borderWidth: 1,
-    borderColor: COLORS.primaryDark,
-    borderRadius: RADIUS.pill,
-    paddingHorizontal: SPACING.sm,
-    paddingVertical: 3,
-  },
-  tutorialBadgeText: {
-    fontFamily: FONTS.sansSerif,
-    fontSize: FONT_SIZES.xs,
-    color: COLORS.primary,
-    fontWeight: '700',
-    letterSpacing: 0.5,
-  },
+  bannerIcon: { fontSize: 20 },
+  lockIcon:   { fontSize: 14 },
 
-  cardTitle: {
-    fontFamily: FONTS.serif,
-    fontSize: FONT_SIZES.xl,
-    color: COLORS.textPrimary,
-    fontWeight: '700',
+  cardBody: {
+    paddingHorizontal: SPACING.lg,
+    paddingVertical: SPACING.md,
+  },
+  cardTagline: {
+    fontFamily: FONTS.sansSerif,
+    fontSize: FONT_SIZES.sm,
+    color: COLORS.textSecondary,
+    lineHeight: 20,
     marginBottom: SPACING.sm,
   },
-  cardDescription: {
-    fontFamily: FONTS.sansSerif,
-    fontSize: FONT_SIZES.md,
-    color: COLORS.textSecondary,
-    lineHeight: 22,
-    marginBottom: SPACING.md,
-  },
-
-  tagsRow: {
+  cardMeta: {
     flexDirection: 'row',
-    flexWrap: 'wrap',
-    gap: SPACING.xs,
-    marginBottom: SPACING.md,
+    alignItems: 'center',
+    gap: SPACING.sm,
   },
-  tag: {
-    backgroundColor: COLORS.surfaceElevated,
+  diffBadge: {
     borderWidth: 1,
-    borderColor: COLORS.border,
     borderRadius: RADIUS.pill,
     paddingHorizontal: SPACING.sm,
-    paddingVertical: 3,
+    paddingVertical: 2,
   },
-  tagDimmed: { opacity: 0.6 },
-  tagText: {
+  diffText: {
     fontFamily: FONTS.sansSerif,
     fontSize: FONT_SIZES.xs,
-    color: COLORS.textSecondary,
-    fontWeight: '600',
+    fontWeight: '700',
+    letterSpacing: 0.3,
   },
-  tagTextDimmed: { color: COLORS.textMuted },
-
-  personaRow: { flexDirection: 'row', alignItems: 'center' },
-  personaLabel: {
+  regionChip: {
     fontFamily: FONTS.sansSerif,
     fontSize: FONT_SIZES.xs,
     color: COLORS.textMuted,
-    textTransform: 'uppercase',
-    letterSpacing: 0.5,
-  },
-  personaName: {
-    fontFamily: FONTS.serif,
-    fontSize: FONT_SIZES.sm,
-    color: COLORS.primary,
-    fontStyle: 'italic',
-  },
-  personaTone: {
-    fontFamily: FONTS.sansSerif,
-    fontSize: FONT_SIZES.xs,
-    color: COLORS.textMuted,
+    letterSpacing: 0.3,
   },
 
   cardCTA: {
@@ -291,7 +445,7 @@ const styles = StyleSheet.create({
   },
   cardCTAText: {
     fontFamily: FONTS.sansSerif,
-    fontSize: FONT_SIZES.md,
+    fontSize: FONT_SIZES.sm,
     color: COLORS.primary,
     fontWeight: '700',
     textAlign: 'right',

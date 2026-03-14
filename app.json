@@ -11,7 +11,9 @@
       "resizeMode": "contain",
       "backgroundColor": "#0D0B07"
     },
-    "assetBundlePatterns": ["**/*"],
+    "assetBundlePatterns": [
+      "**/*"
+    ],
     "ios": {
       "supportsTablet": true,
       "bundleIdentifier": "com.chronicle.rpg"
@@ -25,6 +27,10 @@
       },
       "package": "com.chronicle.rpg"
     },
-    "sdkVersion": "55.0.0"
+    "sdkVersion": "55.0.0",
+    "plugins": [
+      "expo-asset",
+      "expo-audio"
+    ]
   }
 }

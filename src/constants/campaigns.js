@@ -22,6 +22,17 @@ The session ends when the player is ready to leave Ashwick. Do not rush this —
 FLAG REQUIRED: When Mik's fate resolves, you must write goblin_spared: true OR goblin_killed: true to state_updates.flags. This is mandatory. Do not narrate past this moment without setting the flag.`,
     persona: 'chronicler',
     isTutorial: true,
+    world_id: 'chronicle',
+    name_pool: [
+      'Ortina', 'Torven', 'Ulthur',
+      'Brynn', 'Osric', 'Aldwyn', 'Fenwick', 'Caldra', 'Maret', 'Solen',
+      'Davan', 'Thessa', 'Ivor', 'Liret', 'Gareth', 'Syndra', 'Bellon',
+      'Penna', 'Corvan', 'Havis', 'Tesra', 'Wren', 'Dunmore', 'Alric',
+      'Fenna', 'Ostyn', 'Brael', 'Caden', 'Sorel', 'Merrik', 'Talva',
+      'Endric', 'Sova', 'Braith', 'Roran', 'Lysel', 'Gaven', 'Elwyn',
+      'Neven', 'Calyss', 'Dorvin', 'Frell', 'Osta', 'Berwyn', 'Tevan',
+      'Morryn', 'Draven', 'Sylret', 'Harwick', 'Lenne',
+    ],
 
     // Beat injection system:
     // - trigger_at_message: fire on this exact outgoing message number (1-indexed)
@@ -86,14 +97,54 @@ FLAG REQUIRED: If Mik's fate is settled this turn, write { "goblin_spared": true
 
   {
     id: 'epic_quest',
-    title: 'The Shattered Crown',
+    title: 'The Dying Crown',
     genre: 'Epic Quest',
-    tone: 'Heroic',
+    tone: 'Tense',
     difficulty: 'Standard',
-    estimatedLength: '60–80 messages',
-    description: 'A kingdom fractures as three claimants vie for a broken throne. The party is drawn into a conflict that will determine the fate of a generation. Ancient loyalties and fresh treacheries at every turn.',
-    dmBrief: `A multi-act epic campaign. The kingdom of Valdenmere is in crisis — King Aldric died without naming an heir, and three factions now claim the Shattered Crown: the King's niece Sera (young, idealistic, popular with commoners), the High Marshal Vane (ruthless, pragmatic, backed by the military), and the Merchant Council (wealthy, corrupt, favored by the noble houses). The party begins as hired escorts for a courier carrying sealed documents whose contents are unknown. Act 1 ends when the documents are read and their significance understood. The party will be forced to pick a side by Act 2. There is a fourth player no one knows about yet.
-Run this as a proper campaign with meaningful choices that carry forward. The faction the party ultimately supports should shape the ending. NPCs should remember previous interactions.`,
+    estimatedLength: 'Multi-session',
+    world_id: 'aranthos',
+    description: 'King Aldric III sits the throne of Aranthos — but the throne is killing him. Seven factions circle the succession. You arrive without allies, without faction, and with a name given to you by someone who may already be dead.',
+    name_pool: [
+      // Named NPCs from the Aranthos World Bible — never invent replacements for these
+      'Aldric', 'Maren', 'Sera', 'Krag', 'Thora', 'Delvryn', 'Vaelith',
+      'Corvin', 'Sienna', 'Petra', 'Halden', 'Tomis', 'Elara', 'Margret',
+      'Dax', 'Brenn', 'Borin', 'Tilley', 'Razik', 'Pip', 'Aelindra', 'Vel',
+      // Extended Aranthos register for incidental NPCs
+      'Orrath', 'Syndel', 'Kasvyn', 'Therrel', 'Vrenn', 'Ondra', 'Belvyn',
+      'Casseveth', 'Drael', 'Forrath', 'Gundra', 'Halveth', 'Ilvyn', 'Jorrath',
+      'Kyrel', 'Lorveth', 'Myndra', 'Norreth', 'Ovrath', 'Pyrrel',
+    ],
+    dmBrief: `You are running "The Dying Crown" — an epic campaign set in the Kingdom of Aranthos, in the world of Araxys.
+
+THE SITUATION: King Aldric III is dying. He has no declared heir. His condition is a secret held by very few — most of the kingdom believes he is merely ill. Seven factions are already maneuvering for what comes next:
+- The Crown — the king's own loyalists, fractured without direction. His Chancellor, Maren Voss, holds real power and has arranged the king's slow decline for political reasons.
+- The Iron Compact — a powerful mercenary coalition led by General Sera Valdun, backed by three wars' worth of goodwill, building toward a military transition.
+- The Thornbound Conclave — an elven separatist movement pressing independence for the Thornwood under Elder Vaelith; restrained by the elder, radicalised by the young.
+- The Deep Accord — a dwarven merchant consortium led by Guildmaster Thora Coppervault. Currently funding three factions simultaneously. Everything is a transaction.
+- The Crimson Veil — intelligence brokers. Leader known only as The Weaver. Know everything. Sell pieces of it to anyone who can pay.
+- The Ashen Circle — a mage order led by Archmagus Delvryn Osk. Investigating the king's poisoning from a magical angle. Getting dangerously close to The Unnamed.
+- The Broken Chain — a liberation movement for orc and half-orc peoples, led by Krag Ironvoice. Largest popular support. Least political leverage. Critical internal split.
+
+THE PLAYER'S ENTRY: The player arrives in Aldenmere as an outsider — not yet affiliated with any faction. They have been given a name: find Maren Voss, the Lord Chancellor. They do not know who gave them the name or what to expect.
+
+KEY NAMED NPCS — use these exactly; do not invent replacements:
+- Aldric III — the dying king; rarely accessible; kind, tired, uninformed about his own poisoning
+- Maren Voss — Lord Chancellor; the real power; arranged the poisoning; his justifications are coherent
+- Sera Valdun — Iron Compact general; decisive, magnetic, battle-scarred, absolutely certain she is right
+- Elder Vaelith — Thornbound leader; ancient elf; patient as the forest; will not be lied to
+- Thora Coppervault — Deep Accord guildmaster; brilliant, transactional, laughs easily, misses nothing
+- Delvryn Osk — Ashen Circle archmagus; obsessive, brilliant, getting close to something he may not survive
+- Krag Ironvoice — Broken Chain leader; former Crown soldier; powerful speaker; internally conflicted
+- Sienna Drake — Royal Investigator; sharp, cynical, secretly idealistic; will seek out the player
+- Corvin Ash — traveling bard; charming, evasive, knows too much; appears in taverns across the kingdom
+
+FACTION DYNAMICS: No faction is purely good or evil. Every faction has a legitimate claim and a real flaw. The Iron Compact is not a villain faction — they earned their position through genuine military service. The Broken Chain has the moral high ground on most issues and almost no political leverage. The Sundered have legitimate grievances — not every member is a villain. Do not steer the player toward any faction. Let alignment emerge through play.
+
+THE MAIN PLOT: King Aldric III has been slowly poisoned by Lord Chancellor Maren Voss — not from malice, but from calculated political management that has spiraled beyond his control. The Ashen Circle knows a cure exists. So does the Sea Witch in Crestmere. The Crimson Veil knows the full truth and is selling pieces of it. A succession mechanism exists in the old pact-laws — it requires agreement from at least four of the seven factions to invoke. The player may become the broker who assembles that coalition, or the catalyst who destroys it. Both are valid endings.
+
+WORLD REGISTRY ENFORCEMENT: This world has established names. Never invent new names for any of the 9 faction leaders or Sienna Drake or Corvin Ash. Draw all incidental NPC names from the campaign name_pool.
+
+Begin the first session in Aldenmere — arrival scene. The city is tense: faction insignia on buildings, doubled patrols, whispered conversations. Someone has already noticed the player. Deliver 3 suggested actions.`,
     persona: 'chronicler',
     tutorial_beats: [],
   },
@@ -109,6 +160,15 @@ Run this as a proper campaign with meaningful choices that carry forward. The fa
     dmBrief: `A classic dungeon delve structured in three descending levels. Level 1: the entrance and antechamber — traps, minor undead, faded murals that hint at the vault's history. Level 2: the burial halls — more powerful undead, riddle doors, and signs that someone (the missing delver, Tova Brightmantle) came through recently. Level 3: the inner sanctum — the reason the vault was sealed: something was imprisoned here, not entombed. Tova found it. The party must decide whether to free it, destroy it, or seal the vault again.
 Emphasize atmosphere and resource management. Enforce short rests. Make the players feel the weight of the dungeon. Reward careful exploration. The murals on Level 1 should foreshadow the decision on Level 3.`,
     persona: 'greybeard',
+    world_id: 'chronicle',
+    name_pool: [
+      'Tova', 'Brant', 'Cressyn', 'Darveth', 'Egorn', 'Falthren', 'Gorryn',
+      'Hadra', 'Ivrel', 'Jorath', 'Keldra', 'Lorrath', 'Myrren', 'Nelvyn',
+      'Osrath', 'Pelvryn', 'Reldra', 'Selvyn', 'Thorrath', 'Ulrath', 'Vaeldra',
+      'Wendrath', 'Yvorn', 'Zorrath', 'Aelrath', 'Bolvyn', 'Celdra', 'Drelvyn',
+      'Elrath', 'Folveth', 'Gorrath', 'Halvyn', 'Irath', 'Jelvyn', 'Korrath',
+      'Melveth', 'Norrath', 'Olvyn', 'Pelrath', 'Qelvyn',
+    ],
     tutorial_beats: [],
   },
 
@@ -133,6 +193,16 @@ In your first 3–5 responses, establish the heir's identity — a specific name
 Every faction should have NPCs with depth. The Sundered have legitimate grievances — not every member is a villain. Let the player choose their faction alignment organically; do not push them toward any side.`,
     persona: 'chronicler',
     isTutorial: false,
+    world_id: 'chronicle',
+    name_pool: [
+      'Ortina', 'Torven', 'Ulthur',
+      'Cassian', 'Drest', 'Fenra', 'Gorvin', 'Hadwyn', 'Ireth', 'Jorel',
+      'Kastren', 'Lyndra', 'Myren', 'Naleth', 'Orvyn', 'Pellan', 'Ravel',
+      'Serath', 'Thane', 'Urvid', 'Veran', 'Walden', 'Brossa', 'Corvyn',
+      'Daleth', 'Elvan', 'Forbyn', 'Grest', 'Halvyn', 'Idrel', 'Javan',
+      'Kelleth', 'Loryn', 'Mavel', 'Novrel', 'Oswyn', 'Paleth', 'Rovel',
+      'Sylvan', 'Trevyn', 'Ulveth', 'Varrel', 'Ynell', 'Zaren',
+    ],
     tutorial_beats: [],
   },
 
@@ -147,6 +217,13 @@ Every faction should have NPCs with depth. The Sundered have legitimate grievanc
     dmBrief: `Generate a completely original campaign premise for this player. Choose a genre (dungeon crawl, mystery, political intrigue, wilderness survival, heist, or horror), create an original inciting incident, a primary antagonist with a comprehensible motivation, and at least two named NPCs who are immediately relevant. Do NOT use any established fantasy settings or proper names from known fiction. Begin in media res — the player should be doing something when the session opens, not standing in a tavern waiting for a quest hook. After the opening scene, deliver 3 suggested actions.`,
     persona: 'chronicler',
     isRandom: true,
+    name_pool: [
+      'Aelric', 'Brynn', 'Cavan', 'Drest', 'Elvan', 'Fenn', 'Gareth', 'Hadra',
+      'Ivory', 'Jael', 'Kira', 'Lyra', 'Maren', 'Neva', 'Oryn', 'Petra',
+      'Quinn', 'Rael', 'Sora', 'Thane', 'Uriel', 'Vera', 'Wren', 'Xara',
+      'Yara', 'Aldric', 'Brant', 'Corvin', 'Davan', 'Elara', 'Gaven', 'Hael',
+      'Ivar', 'Joren', 'Kael', 'Lenna', 'Mira', 'Nora', 'Orin', 'Pell',
+    ],
     tutorial_beats: [],
   },
 ];
@@ -229,3 +306,121 @@ export function getTutorialBeatInjection(messageCount, sessionFlags = {}, nowMs 
   }
   return null;
 }
+
+// ─── Araxys Spawn Points ──────────────────────────────────────────────────────
+// Each spawn point resolves to the epic_quest (Dying Crown) campaign with a
+// location-specific opening directive prepended to the DM brief.
+// Art: drop SPAWN_<id>.png into src/assets/ and update SpawnArt in assets/index.js.
+
+export const SPAWN_POINTS = [
+  {
+    id: 'spawn_aldenmere',
+    locationId: 'aldenmere',
+    name: 'The Whetted Compass',
+    city: 'Aldenmere',
+    region: 'The Heartlands',
+    regionId: 'heartlands',
+    tagline: 'The capital. Maximum options. Political intrigue from day one.',
+    difficulty: 'Challenging',
+    dmOpeningDirective: `OPENING SCENE: The player arrives in Aldenmere, the capital of Aranthos, at The Whetted Compass inn. The city feels tense — doubled Crown patrols, faction insignia on buildings and cloaks, conversations cutting off as strangers pass. Someone has already noticed the player. Begin here.`,
+  },
+  {
+    id: 'spawn_crestmere',
+    locationId: 'crestmere',
+    name: 'The Silver Anchor',
+    city: 'Crestmere',
+    region: 'The Tidebreak Coast',
+    regionId: 'tidebreak_coast',
+    tagline: 'A port where all races trade and all factions have ears.',
+    difficulty: 'Standard',
+    dmOpeningDirective: `OPENING SCENE: The player arrives in Crestmere, the great port city, at The Silver Anchor inn on the harbor front. All races pass through; all factions have agents here. The Crimson Veil's presence is felt more than seen. Establish the port's layered energy. Begin here.`,
+  },
+  {
+    id: 'spawn_ironhold',
+    locationId: 'ironhold',
+    name: 'The Stone Cup',
+    city: 'Ironhold',
+    region: 'The Ashpeaks',
+    regionId: 'ashpeaks',
+    tagline: 'Dwarven stronghold. The Deep Accord controls everything here.',
+    difficulty: 'Standard',
+    dmOpeningDirective: `OPENING SCENE: The player arrives in Ironhold, the great dwarven stronghold city carved into the Ashpeaks, at The Stone Cup — run by Borin Copperkettle. The forges are audible through thick stone walls. Deep Accord insignia and contract boards cover every surface. Establish the underground city's weight and the culture of transaction. Begin here.`,
+  },
+  {
+    id: 'spawn_millford',
+    locationId: 'millford',
+    name: 'The Golden Grain',
+    city: 'Millford',
+    region: 'The Heartlands',
+    regionId: 'heartlands',
+    tagline: 'Crossroads town. The Iron Compact encampment is visible from the window.',
+    difficulty: 'Standard',
+    dmOpeningDirective: `OPENING SCENE: The player arrives in Millford at The Golden Grain inn. Through the common room window the Iron Compact's encampment is clearly visible — grey banners, armed soldiers. The locals speak quietly. Establish the town's nervous energy. Something is building. Begin here.`,
+  },
+  {
+    id: 'spawn_deepwell',
+    locationId: 'deepwell',
+    name: 'The Muddy Boot',
+    city: 'Deepwell',
+    region: 'The Lowfen',
+    regionId: 'lowfen',
+    tagline: 'River town. Gentle start. Something strange is coming from the marsh.',
+    difficulty: 'Introduction',
+    dmOpeningDirective: `OPENING SCENE: The player arrives in Deepwell, a halfling river-trade town in the Lowfen marshes, at The Muddy Boot inn run by Pip Tannerfoot. Warm, damp, friendly — but the town has been unsettled lately. Something strange has been heard at night from the direction of the Fenhollow. Begin here.`,
+  },
+  {
+    id: 'spawn_waystone',
+    locationId: 'waystone_rest',
+    name: 'The Waystone Rest',
+    city: "The King's Road",
+    region: 'The Heartlands',
+    regionId: 'heartlands',
+    tagline: 'Open road. Anything passes through this waypoint.',
+    difficulty: 'Variable',
+    dmOpeningDirective: `OPENING SCENE: The player is at The Waystone Rest, a roadside camp at a major junction of the King's Road. A fire burns low. Travelers heading to and from Aldenmere have passed through all day. One is still here, watching the road. Establish the open-road energy. Begin here.`,
+  },
+  {
+    id: 'spawn_hunters_rest',
+    locationId: 'hunters_rest',
+    name: "Hunter's Rest",
+    city: 'Thornwood Edge',
+    region: 'The Thornwood',
+    regionId: 'thornwood',
+    tagline: 'The forest begins here. The elves are watching.',
+    difficulty: 'Challenging',
+    dmOpeningDirective: `OPENING SCENE: The player is at Hunter's Rest, a rough camp at the edge of the Thornwood. The treeline begins ten feet away — dense, dark, impossibly old. Something moved between the trees an hour ago and nobody is discussing it. Establish the eerie beauty and the feeling of being watched. Begin here.`,
+  },
+  {
+    id: 'spawn_black_moor',
+    locationId: 'black_moor_camp',
+    name: 'The Black Moor Camp',
+    city: 'The Scorched Reach',
+    region: 'The Scorched Reach',
+    regionId: 'scorched_reach',
+    tagline: 'Orc clan ground. Respect earns passage. Broken Chain territory.',
+    difficulty: 'Challenging',
+    dmOpeningDirective: `OPENING SCENE: The player is at The Black Moor Camp, a seasonal orc clan ground on the western edge of the Scorched Reach. The communal fire is large. Orc and half-orc warriors are present — assessing, not hostile. The Broken Chain symbol is visible on more than a few belts. An outsider here is a curiosity, not yet a threat. Establish the respect-first culture. Begin here.`,
+  },
+  {
+    id: 'spawn_embers_end',
+    locationId: 'embers_end',
+    name: "Ember's End",
+    city: 'Emberveil Border',
+    region: 'The Emberveil',
+    regionId: 'emberveil',
+    tagline: "Volcanic rock and obsidian sky. Embervast is one day's walk south.",
+    difficulty: 'Challenging',
+    dmOpeningDirective: `OPENING SCENE: The player is at Ember's End, a waypoint on volcanic rock at the border of the Emberveil. The ground is warm underfoot. Embervast glows on the horizon. Establish the alien beauty of this landscape and the player as a rare outsider on the threshold of a world that seldom receives them. Begin here.`,
+  },
+  {
+    id: 'spawn_random',
+    locationId: null,
+    name: 'Fate Decides',
+    city: 'Unknown',
+    region: 'Araxys',
+    regionId: null,
+    tagline: 'The world places you where the story needs you. No two journeys alike.',
+    difficulty: 'Variable',
+    isRandom: true,
+  },
+];

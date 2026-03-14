@@ -37,12 +37,37 @@ export const CampaignArt = {
   random:        require('./CAMPAIGN_random.png'),
 };
 
-// ─── DICE SKINS ───────────────────────────────────────────────────────────────
+// ─── DICE SKINS (set renders — used as selector preview cards) ────────────────
 export const DiceArt = {
   graystone: require('./DICE_graystone.png'),
   obsidian:  require('./DICE_obsidian.png'),
   dragon:    require('./DICE_dragon.png'),
   crystal:   require('./DICE_crystal.png'),
+};
+
+// ─── DICE FACE TEXTURES (top-down single-face renders — used on the die in-game) ──
+// Uncomment once DICE_*_face.png images are generated and dropped into this folder:
+ export const DiceFaceArt = {
+   graystone: require('./DICE_graystone_face.png'),
+   obsidian:  require('./DICE_obsidian_face.png'),
+   dragon:    require('./DICE_dragon_face.png'),
+   crystal:   require('./DICE_crystal_face.png'),
+ };
+
+// ─── SPAWN POINT ART ──────────────────────────────────────────────────────────
+// Drop SPAWN_<id>.png files into this folder, then replace null with require().
+// Naming convention: SPAWN_aldenmere.png, SPAWN_crestmere.png, etc.
+export const SpawnArt = {
+  spawn_aldenmere:    null, // require('./SPAWN_aldenmere.png')
+  spawn_crestmere:    null, // require('./SPAWN_crestmere.png')
+  spawn_ironhold:     null, // require('./SPAWN_ironhold.png')
+  spawn_millford:     null, // require('./SPAWN_millford.png')
+  spawn_deepwell:     null, // require('./SPAWN_deepwell.png')
+  spawn_waystone:     null, // require('./SPAWN_waystone.png')
+  spawn_hunters_rest: null, // require('./SPAWN_hunters_rest.png')
+  spawn_black_moor:   null, // require('./SPAWN_black_moor.png')
+  spawn_embers_end:   null, // require('./SPAWN_embers_end.png')
+  spawn_random:       null, // require('./SPAWN_random.png')
 };
 
 // ─── UI ICONS ─────────────────────────────────────────────────────────────────

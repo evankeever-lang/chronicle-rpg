@@ -10,13 +10,24 @@ import {
   Modal,
   ScrollView,
   ImageBackground,
+  Image,
 } from 'react-native';
 import { LinearGradient } from 'expo-linear-gradient';
 import { loadGame, deleteSave, timeSince } from '../utils/storage';
-import { Splashes } from '../assets';
+import { startMenuMusic } from '../utils/menuMusic';
+import { Splashes, DiceArt } from '../assets';
 import { resetProgress } from '../utils/progress';
 import { useGame } from '../context/GameContext';
 import { COLORS, FONTS, FONT_SIZES, SPACING, RADIUS, SHADOWS } from '../constants/theme';
+import SettingsModal from '../components/SettingsModal';
+
+const DICE_SKINS = [
+  { key: 'default',   label: 'Classic',   image: null },
+  { key: 'graystone', label: 'Graystone', image: DiceArt.graystone },
+  { key: 'obsidian',  label: 'Obsidian',  image: DiceArt.obsidian  },
+  { key: 'dragon',    label: 'Dragon',    image: DiceArt.dragon    },
+  { key: 'crystal',   label: 'Crystal',   image: DiceArt.crystal   },
+];
 
 const HOW_TO_PLAY = [
   {
@@ -50,15 +61,18 @@ const HOW_TO_PLAY = [
 ];
 
 export default function MainMenuScreen({ navigation }) {
-  const { loadSavedGame } = useGame();
+  const { loadSavedGame, preferences, setDiceSkin } = useGame();
   const [saveData, setSaveData] = useState(null);
   const [checking, setChecking] = useState(true);
   const [howToPlayVisible, setHowToPlayVisible] = useState(false);
+  const [skinModalVisible, setSkinModalVisible] = useState(false);
+  const [settingsVisible, setSettingsVisible] = useState(false);
 
   const fadeAnim = useRef(new Animated.Value(0)).current;
   const slideAnim = useRef(new Animated.Value(24)).current;
 
   useEffect(() => {
+    startMenuMusic();
     loadGame().then((save) => {
       setSaveData(save);
       setChecking(false);
@@ -132,11 +146,11 @@ export default function MainMenuScreen({ navigation }) {
 
         {/* ── Title ── */}
         <View style={styles.titleSection}>
-          <Text style={styles.eyebrow}>⚔  Project  ⚔</Text>
+          <Text style={styles.eyebrow}>Project</Text>
           <Text style={styles.title}>Chronicle</Text>
           <View style={styles.dividerRow}>
             <View style={styles.dividerLine} />
-            <Text style={styles.dividerGem}>◆</Text>
+            <View style={styles.dividerGem} />
             <View style={styles.dividerLine} />
           </View>
           <Text style={styles.tagline}>An AI-Powered Tabletop Adventure</Text>
@@ -151,7 +165,7 @@ export default function MainMenuScreen({ navigation }) {
             </View>
             <View style={styles.saveCardBody}>
               <View style={styles.savePortrait}>
-                <Text style={styles.savePortraitEmoji}>{char?.race?.emoji || '⚔️'}</Text>
+                <Text style={styles.savePortraitInitial}>{char?.race?.name?.[0] || char?.name?.[0] || '?'}</Text>
               </View>
               <View style={styles.saveInfo}>
                 <Text style={styles.saveCharName}>{char?.name || 'Unknown Hero'}</Text>
@@ -191,25 +205,69 @@ export default function MainMenuScreen({ navigation }) {
           </TouchableOpacity>
         </View>
 
-        {/* ── Secondary options row ── */}
-        <View style={styles.secondaryRow}>
-          <TouchableOpacity style={styles.secondaryBtn} onPress={() => setHowToPlayVisible(true)} activeOpacity={0.7}>
-            <Text style={styles.secondaryBtnText}>How to Play</Text>
+        {/* ── Secondary options grid ── */}
+        <View style={styles.secondaryGrid}>
+          <TouchableOpacity style={styles.secondaryTile} onPress={() => setSettingsVisible(true)} activeOpacity={0.75}>
+            <Text style={styles.secondaryTileText}>Settings</Text>
           </TouchableOpacity>
-          <View style={styles.secondaryDot} />
+          <TouchableOpacity style={styles.secondaryTile} onPress={() => setHowToPlayVisible(true)} activeOpacity={0.75}>
+            <Text style={styles.secondaryTileText}>How to Play</Text>
+          </TouchableOpacity>
+          <TouchableOpacity style={styles.secondaryTile} onPress={() => setSkinModalVisible(true)} activeOpacity={0.75}>
+            <Text style={styles.secondaryTileText}>Dice Skins</Text>
+          </TouchableOpacity>
           {hasSave ? (
-            <TouchableOpacity style={styles.secondaryBtn} onPress={handleEraseSave} activeOpacity={0.7}>
-              <Text style={[styles.secondaryBtnText, styles.secondaryDanger]}>Erase Save</Text>
+            <TouchableOpacity style={[styles.secondaryTile, styles.secondaryTileDanger]} onPress={handleEraseSave} activeOpacity={0.75}>
+              <Text style={[styles.secondaryTileText, styles.secondaryTileTextDanger]}>Erase Save</Text>
             </TouchableOpacity>
           ) : (
-            <TouchableOpacity style={styles.secondaryBtn} onPress={() => setHowToPlayVisible(true)} activeOpacity={0.7}>
-              <Text style={styles.secondaryBtnText}>About</Text>
+            <TouchableOpacity style={styles.secondaryTile} onPress={() => setHowToPlayVisible(true)} activeOpacity={0.75}>
+              <Text style={styles.secondaryTileText}>About</Text>
             </TouchableOpacity>
           )}
         </View>
 
         <Text style={styles.footer}>More campaigns coming in future seasons</Text>
       </Animated.View>
+
+      {/* ── Dice Skin modal ── */}
+      <Modal visible={skinModalVisible} animationType="slide" transparent onRequestClose={() => setSkinModalVisible(false)}>
+        <View style={styles.modalBackdrop}>
+          <View style={styles.modalSheet}>
+            <View style={styles.modalHandle} />
+            <Text style={styles.modalTitle}>Choose Your Dice</Text>
+            <View style={styles.modalDivider} />
+            <ScrollView contentContainerStyle={styles.skinGrid} showsVerticalScrollIndicator={false}>
+              {DICE_SKINS.map((skin) => {
+                const isSelected = (preferences?.diceSkin || 'default') === skin.key;
+                return (
+                  <TouchableOpacity
+                    key={skin.key}
+                    style={[styles.skinCard, isSelected && styles.skinCardSelected]}
+                    onPress={() => setDiceSkin(skin.key)}
+                    activeOpacity={0.8}
+                  >
+                    {skin.image ? (
+                      <Image source={skin.image} style={styles.skinCardImage} resizeMode="cover" />
+                    ) : (
+                      <View style={styles.skinCardClassic}>
+                        <Text style={styles.skinCardClassicDie}>D6</Text>
+                      </View>
+                    )}
+                    <Text style={[styles.skinCardLabel, isSelected && styles.skinCardLabelSelected]}>
+                      {skin.label}
+                    </Text>
+                    {isSelected && <View style={styles.skinCardCheck}><View style={styles.skinCardCheckDot} /></View>}
+                  </TouchableOpacity>
+                );
+              })}
+            </ScrollView>
+            <TouchableOpacity style={styles.modalClose} onPress={() => setSkinModalVisible(false)} activeOpacity={0.85}>
+              <Text style={styles.modalCloseText}>Done</Text>
+            </TouchableOpacity>
+          </View>
+        </View>
+      </Modal>
 
       {/* ── How to Play modal ── */}
       <Modal visible={howToPlayVisible} animationType="slide" transparent onRequestClose={() => setHowToPlayVisible(false)} >
@@ -236,6 +294,7 @@ export default function MainMenuScreen({ navigation }) {
           </View>
         </View>
       </Modal>
+      <SettingsModal visible={settingsVisible} onClose={() => setSettingsVisible(false)} />
     </SafeAreaView>
     </ImageBackground>
   );
@@ -268,7 +327,7 @@ const styles = StyleSheet.create({
   },
   dividerRow: { flexDirection: 'row', alignItems: 'center', gap: SPACING.sm, marginBottom: SPACING.sm, width: '60%' },
   dividerLine: { flex: 1, height: 1, backgroundColor: COLORS.primary, opacity: 0.4 },
-  dividerGem: { color: COLORS.primary, fontSize: 10, opacity: 0.7 },
+  dividerGem: { width: 6, height: 6, borderRadius: 3, backgroundColor: COLORS.primary, opacity: 0.7 },
   tagline: { fontFamily: FONTS.sansSerif, fontSize: FONT_SIZES.sm, color: COLORS.textSecondary, letterSpacing: 0.5 },
 
   // Save card
@@ -284,7 +343,10 @@ const styles = StyleSheet.create({
     width: 48, height: 48, borderRadius: RADIUS.md, backgroundColor: COLORS.surfaceElevated,
     borderWidth: 1, borderColor: COLORS.primaryDark, alignItems: 'center', justifyContent: 'center',
   },
-  savePortraitEmoji: { fontSize: 24 },
+  savePortraitInitial: {
+    fontSize: 20, color: COLORS.primary, fontFamily: FONTS.serif,
+    fontWeight: '700', textTransform: 'uppercase',
+  },
   saveInfo: { flex: 1 },
   saveCharName: { fontFamily: FONTS.serif, fontSize: FONT_SIZES.lg, color: COLORS.textPrimary, fontWeight: '700' },
   saveCharMeta: { fontFamily: FONTS.sansSerif, fontSize: FONT_SIZES.xs, color: COLORS.textSecondary, marginTop: 2 },
@@ -307,15 +369,21 @@ const styles = StyleSheet.create({
   },
   btnSecondaryText: { fontFamily: FONTS.sansSerif, fontSize: FONT_SIZES.md, color: COLORS.textSecondary, fontWeight: '600' },
 
-  // Secondary row (How to Play / Erase)
-  secondaryRow: {
-    flexDirection: 'row', alignItems: 'center', justifyContent: 'center',
-    gap: SPACING.md, marginBottom: SPACING.xl,
+  // Secondary options grid
+  secondaryGrid: {
+    flexDirection: 'row', flexWrap: 'wrap', gap: SPACING.sm, marginBottom: SPACING.xl,
   },
-  secondaryBtn: { paddingVertical: SPACING.xs, paddingHorizontal: SPACING.sm },
-  secondaryBtnText: { fontFamily: FONTS.sansSerif, fontSize: FONT_SIZES.sm, color: COLORS.textMuted },
-  secondaryDanger: { color: COLORS.danger, opacity: 0.7 },
-  secondaryDot: { width: 3, height: 3, borderRadius: 2, backgroundColor: COLORS.textMuted, opacity: 0.4 },
+  secondaryTile: {
+    flex: 1, minWidth: '45%', alignItems: 'center', justifyContent: 'center',
+    backgroundColor: COLORS.surfaceElevated, borderWidth: 1, borderColor: COLORS.border,
+    borderRadius: RADIUS.lg, paddingVertical: SPACING.md, paddingHorizontal: SPACING.sm,
+  },
+  secondaryTileDanger: { borderColor: COLORS.danger + '55' },
+  secondaryTileText: {
+    fontFamily: FONTS.sansSerif, fontSize: FONT_SIZES.sm, color: COLORS.textSecondary,
+    fontWeight: '600', letterSpacing: 0.3,
+  },
+  secondaryTileTextDanger: { color: COLORS.danger, opacity: 0.85 },
 
   footer: { fontFamily: FONTS.sansSerif, fontSize: FONT_SIZES.xs, color: COLORS.textMuted, textAlign: 'center', fontStyle: 'italic' },
 
@@ -352,4 +420,43 @@ const styles = StyleSheet.create({
     paddingVertical: SPACING.md, alignItems: 'center', ...SHADOWS.glow,
   },
   modalCloseText: { fontFamily: FONTS.sansSerif, fontSize: FONT_SIZES.md, color: COLORS.background, fontWeight: '800' },
+
+  // Dice skin selector
+  skinGrid: {
+    flexDirection: 'row', flexWrap: 'wrap', justifyContent: 'center',
+    gap: SPACING.md, paddingHorizontal: SPACING.lg, paddingVertical: SPACING.md,
+  },
+  skinCard: {
+    width: 140, borderRadius: RADIUS.lg,
+    borderWidth: 2, borderColor: COLORS.border,
+    overflow: 'hidden', alignItems: 'center',
+    backgroundColor: COLORS.surfaceElevated,
+  },
+  skinCardSelected: {
+    borderColor: COLORS.primary,
+    shadowColor: COLORS.primary, shadowOpacity: 0.5, shadowRadius: 8, elevation: 6,
+  },
+  skinCardImage: { width: 140, height: 100 },
+  skinCardClassic: {
+    width: 140, height: 100, alignItems: 'center', justifyContent: 'center',
+    backgroundColor: COLORS.surface,
+  },
+  skinCardClassicDie: {
+    fontSize: 28, color: COLORS.primary, fontFamily: FONTS.serif,
+    fontWeight: '700', letterSpacing: 2,
+  },
+  skinCardLabel: {
+    fontFamily: FONTS.sansSerif, fontSize: FONT_SIZES.xs, color: COLORS.textSecondary,
+    letterSpacing: 1.5, textTransform: 'uppercase', fontWeight: '700',
+    paddingVertical: SPACING.sm,
+  },
+  skinCardLabelSelected: { color: COLORS.primary },
+  skinCardCheck: {
+    position: 'absolute', top: 6, right: 8,
+    backgroundColor: COLORS.primary, borderRadius: RADIUS.pill,
+    width: 20, height: 20, alignItems: 'center', justifyContent: 'center',
+  },
+  skinCardCheckDot: {
+    width: 8, height: 8, borderRadius: 4, backgroundColor: COLORS.background,
+  },
 });

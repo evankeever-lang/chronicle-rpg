@@ -5,6 +5,7 @@
 import React from 'react';
 import { View, Text, ScrollView, StyleSheet, TouchableOpacity } from 'react-native';
 import { COLORS, FONTS, FONT_SIZES, SPACING, RADIUS } from '../constants/theme';
+import GifHealthBar from './GifHealthBar';
 
 // ─── Turn order token ─────────────────────────────────────────────────────────
 function TurnToken({ combatant, isActive }) {
@@ -28,7 +29,6 @@ function TurnToken({ combatant, isActive }) {
 // ─── Enemy HP bar row ─────────────────────────────────────────────────────────
 function EnemyRow({ enemy }) {
   const pct = enemy.maxHp > 0 ? enemy.hp / enemy.maxHp : 0;
-  const barColor = pct > 0.5 ? COLORS.danger : pct > 0.25 ? COLORS.warning : COLORS.hpLow;
   const defeated = enemy.hp <= 0;
 
   return (
@@ -45,9 +45,7 @@ function EnemyRow({ enemy }) {
           )}
         </View>
         {!defeated && (
-          <View style={styles.hpBarBg}>
-            <View style={[styles.hpBarFill, { width: `${Math.max(0, pct * 100)}%`, backgroundColor: barColor }]} />
-          </View>
+          <GifHealthBar hp={enemy.hp} maxHp={enemy.maxHp} width="100%" height={10} />
         )}
         {enemy.conditions?.length > 0 && (
           <View style={styles.conditionRow}>
@@ -81,7 +79,6 @@ export function EnemyZone({ activeEnemies, isAttacking = false, onSelectEnemy })
         const defeated = enemy.hp <= 0;
         const selectable = isAttacking && !defeated;
         const pct = enemy.maxHp > 0 ? enemy.hp / enemy.maxHp : 0;
-        const barColor = pct > 0.5 ? COLORS.danger : pct > 0.25 ? COLORS.warning : COLORS.hpLow;
         const CardWrapper = selectable ? TouchableOpacity : View;
         return (
           <CardWrapper
@@ -104,9 +101,7 @@ export function EnemyZone({ activeEnemies, isAttacking = false, onSelectEnemy })
             {!defeated ? (
               <>
                 <Text style={zoneStyles.hpText}>{enemy.hp}/{enemy.maxHp}</Text>
-                <View style={zoneStyles.hpBarBg}>
-                  <View style={[zoneStyles.hpBarFill, { width: `${Math.max(0, pct * 100)}%`, backgroundColor: barColor }]} />
-                </View>
+                <GifHealthBar hp={enemy.hp} maxHp={enemy.maxHp} width={72} height={10} style={{ marginBottom: 2 }} />
                 <Text style={zoneStyles.acText}>AC {enemy.ac}</Text>
                 {selectable && <Text style={zoneStyles.tapHint}>Tap to attack</Text>}
               </>
@@ -167,18 +162,6 @@ const zoneStyles = StyleSheet.create({
     color: COLORS.textMuted,
     fontSize: 10,
     marginBottom: 2,
-  },
-  hpBarBg: {
-    width: 72,
-    height: 5,
-    backgroundColor: COLORS.border,
-    borderRadius: 3,
-    overflow: 'hidden',
-    marginBottom: 2,
-  },
-  hpBarFill: {
-    height: '100%',
-    borderRadius: 3,
   },
   acText: {
     color: COLORS.textMuted,

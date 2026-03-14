@@ -2,7 +2,8 @@ import * as FileSystem from 'expo-file-system/legacy';
 
 const SAVES_DIR = FileSystem.documentDirectory + 'saves/';
 const AUTO_SAVE_PATH = SAVES_DIR + 'autosave.json';
-const SAVE_VERSION = 1;
+const PREFS_PATH    = SAVES_DIR + 'preferences.json';
+const SAVE_VERSION = 2;
 
 async function ensureDir() {
   const info = await FileSystem.getInfoAsync(SAVES_DIR);
@@ -31,6 +32,16 @@ export async function saveGame(state) {
       sessionMessageCount: state.sessionMessageCount,
       sessionStartedAt: state.sessionStartedAt,
       isSessionActive: state.isSessionActive,
+      // Context window management (were missing — cross-session continuity)
+      worldRegistry: state.worldRegistry,
+      entityRegistry: state.entityRegistry,
+      rollingSummary: state.rollingSummary || null,
+      campaignMemory: state.campaignMemory || null,
+      // Aranthos world tracking
+      worldReputations: state.worldReputations,
+      visitedLocations: state.visitedLocations || [],
+      npcDispositions: state.npcDispositions || {},
+      mainPlotStage: state.mainPlotStage || 'hidden',
     };
     await FileSystem.writeAsStringAsync(AUTO_SAVE_PATH, JSON.stringify(saveData));
     return saveData;
@@ -49,11 +60,39 @@ export async function loadGame() {
     if (!info.exists) return null;
     const json = await FileSystem.readAsStringAsync(AUTO_SAVE_PATH);
     const data = JSON.parse(json);
-    // Basic version guard — discard saves from incompatible versions
-    if (data.version !== SAVE_VERSION) return null;
+    // Accept v1 saves (missing new fields) — GameContext.LOAD_GAME spreads over
+    // initialState so missing fields get their defaults automatically.
+    // Only discard saves from truly incompatible future versions.
+    if (data.version !== SAVE_VERSION && data.version !== 1) return null;
     return data;
   } catch (e) {
     console.warn('[Chronicle] Load failed:', e);
+    return null;
+  }
+}
+
+/**
+ * Persist user preferences (dice skin, volume, etc.) independently of the game save.
+ * Survives session resets and game save/load.
+ */
+export async function savePreferences(preferences) {
+  try {
+    await ensureDir();
+    await FileSystem.writeAsStringAsync(PREFS_PATH, JSON.stringify(preferences));
+  } catch (e) {
+    console.warn('[Chronicle] Preferences save failed:', e);
+  }
+}
+
+/**
+ * Load persisted user preferences. Returns null if none saved yet.
+ */
+export async function loadPreferences() {
+  try {
+    const info = await FileSystem.getInfoAsync(PREFS_PATH);
+    if (!info.exists) return null;
+    return JSON.parse(await FileSystem.readAsStringAsync(PREFS_PATH));
+  } catch (e) {
     return null;
   }
 }
