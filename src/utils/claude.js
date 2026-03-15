@@ -118,7 +118,8 @@ You MUST respond with valid JSON only. No prose outside the JSON object.
     "loot": null,
     "enemies": [],
     "conditions_applied": [],
-    "conditions_removed": []
+    "conditions_removed": [],
+    "enemy_conditions": []
   }
 }
 
@@ -188,7 +189,9 @@ For other system events, set the "system" field:
 If the player does something that should set a story flag, add it to state_updates.flags.
 If an NPC's status changes, add them to state_updates.npc_updates.
 If the player takes or heals damage, set state_updates.hp_change to the integer delta (negative = damage).
-If loot is found, set state_updates.loot to a loot system object.${
+If loot is found, set state_updates.loot to a loot system object.
+If a condition is applied to or removed from the PLAYER, use state_updates.conditions_applied and conditions_removed (string arrays).
+If a condition is applied to or removed from an ENEMY, use state_updates.enemy_conditions: [{ "name": "Enemy Name", "apply": ["Poisoned"], "remove": [] }]. Valid conditions: Poisoned, Frightened, Stunned, Prone, Blinded, Restrained. Match name exactly as it appears in the enemy list.${
   campaign.name_pool?.length
     ? `\n\n## Name Pool — draw ALL new NPC names from this list only\n${campaign.name_pool.slice(0, 25).join(', ')}`
     : ''
@@ -309,6 +312,7 @@ export function parseDMResponse(raw) {
         enemies: Array.isArray(su.enemies) ? su.enemies : [],
         conditions_applied: Array.isArray(su.conditions_applied) ? su.conditions_applied : [],
         conditions_removed: Array.isArray(su.conditions_removed) ? su.conditions_removed : [],
+        enemy_conditions: Array.isArray(su.enemy_conditions) ? su.enemy_conditions : [],
       },
     };
   } catch {
@@ -325,7 +329,7 @@ export function parseDMResponse(raw) {
       enemy_action: null,
       state_updates: {
         flags: {}, npc_updates: [], hp_change: null, loot: null,
-        enemies: [], conditions_applied: [], conditions_removed: [],
+        enemies: [], conditions_applied: [], conditions_removed: [], enemy_conditions: [],
       },
     };
   }
@@ -408,6 +412,7 @@ export async function callDM({
     npc_memory: su.npc_updates?.length > 0 ? su.npc_updates : null,
     conditions_applied: su.conditions_applied?.length ? su.conditions_applied : null,
     conditions_removed: su.conditions_removed?.length ? su.conditions_removed : null,
+    enemy_conditions: su.enemy_conditions?.length ? su.enemy_conditions : null,
     enemies: su.enemies?.length ? su.enemies : null,
   };
 

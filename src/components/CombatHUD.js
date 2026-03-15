@@ -7,6 +7,24 @@ import { View, Text, ScrollView, StyleSheet, TouchableOpacity } from 'react-nati
 import { COLORS, FONTS, FONT_SIZES, SPACING, RADIUS } from '../constants/theme';
 import GifHealthBar from './GifHealthBar';
 
+// ─── Condition icons ──────────────────────────────────────────────────────────
+const CONDITION_ICONS = {
+  Poisoned:     '🟣',
+  Frightened:   '😨',
+  Stunned:      '⚡',
+  Prone:        '💤',
+  Blinded:      '🕶️',
+  Restrained:   '⛓️',
+  Paralyzed:    '🔒',
+  Unconscious:  '💀',
+  Burning:      '🔥',
+  Frozen:       '❄️',
+  Blessed:      '✨',
+  Advantage:    '🎯',
+  Disadvantage: '🎲',
+};
+const conditionIcon = (name) => CONDITION_ICONS[name] || '⚠️';
+
 // ─── Turn order token ─────────────────────────────────────────────────────────
 function TurnToken({ combatant, isActive }) {
   const defeated = !combatant.isPlayer && combatant.hp <= 0;
@@ -51,7 +69,7 @@ function EnemyRow({ enemy }) {
           <View style={styles.conditionRow}>
             {enemy.conditions.map((c, i) => (
               <View key={i} style={styles.conditionChip}>
-                <Text style={styles.conditionText}>{c}</Text>
+                <Text style={styles.conditionText}>{conditionIcon(c)} {c}</Text>
               </View>
             ))}
           </View>
@@ -70,6 +88,16 @@ const ENEMY_SHAPE_PALETTE = [
   { color: '#C9A84C' },
 ];
 
+// Intent icon based on HP pct and conditions
+function getEnemyIntent(enemy) {
+  if (enemy.hp <= 0) return null;
+  if (enemy.conditions?.includes('Stunned')) return '⚡'; // stunned — can't act
+  const pct = enemy.maxHp > 0 ? enemy.hp / enemy.maxHp : 1;
+  if (pct <= 0.25) return '💀'; // bloodied / enraged
+  if (pct <= 0.5) return '🩸';  // wounded
+  return '⚔️';                   // healthy — will attack
+}
+
 export function EnemyZone({ activeEnemies, isAttacking = false, onSelectEnemy }) {
   if (!activeEnemies || activeEnemies.length === 0) return null;
   return (
@@ -79,6 +107,7 @@ export function EnemyZone({ activeEnemies, isAttacking = false, onSelectEnemy })
         const defeated = enemy.hp <= 0;
         const selectable = isAttacking && !defeated;
         const pct = enemy.maxHp > 0 ? enemy.hp / enemy.maxHp : 0;
+        const intent = getEnemyIntent(enemy);
         const CardWrapper = selectable ? TouchableOpacity : View;
         return (
           <CardWrapper
@@ -87,6 +116,9 @@ export function EnemyZone({ activeEnemies, isAttacking = false, onSelectEnemy })
             onPress={selectable ? () => onSelectEnemy(enemy) : undefined}
             activeOpacity={0.7}
           >
+            {intent && (
+              <Text style={zoneStyles.intentIcon}>{intent}</Text>
+            )}
             <View style={[
               zoneStyles.enemyShape,
               { borderColor: selectable ? '#FF6B6B' : palette.color, backgroundColor: palette.color + '22' },
@@ -112,7 +144,7 @@ export function EnemyZone({ activeEnemies, isAttacking = false, onSelectEnemy })
               <View style={zoneStyles.conditionRow}>
                 {enemy.conditions.map((c, ci) => (
                   <View key={ci} style={zoneStyles.conditionChip}>
-                    <Text style={zoneStyles.conditionText}>{c}</Text>
+                    <Text style={zoneStyles.conditionText}>{conditionIcon(c)}</Text>
                   </View>
                 ))}
               </View>
@@ -136,6 +168,10 @@ const zoneStyles = StyleSheet.create({
     flex: 1,
     alignItems: 'center',
     maxWidth: 120,
+  },
+  intentIcon: {
+    fontSize: 14,
+    marginBottom: 3,
   },
   defeated: {
     opacity: 0.3,
@@ -308,7 +344,7 @@ export default function CombatHUD({
           <Text style={styles.playerConditionLabel}>You: </Text>
           {playerConditions.map((c, i) => (
             <View key={i} style={[styles.conditionChip, styles.conditionChipPlayer]}>
-              <Text style={[styles.conditionText, styles.conditionTextPlayer]}>{c}</Text>
+              <Text style={[styles.conditionText, styles.conditionTextPlayer]}>{conditionIcon(c)} {c}</Text>
             </View>
           ))}
         </View>

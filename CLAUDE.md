@@ -27,12 +27,26 @@ Core game loop is working end-to-end on iOS:
 
 ### Build Now 🔨 In Progress
 Six workstreams to reach soft-launch readiness. Build in this order:
-1. **Combat state machine** ✅ — refinement sprint complete; conditions system in progress (last launch blocker)
+1. **Combat state machine** ✅ — complete including conditions system (Poisoned, Frightened, Stunned, Prone)
 2. **World registry & name seeding** ✅ — worldRegistry in GameContext, injected in every API call, name pool per campaign
-3. **Tutorial beat finalisation** — refine existing + wire to new combat system
-4. **Music system** — tone routing infrastructure complete (currentTone in GameContext, setTone dispatched on every DM response); `music.js` stem architecture + crossfade engine not yet built
-5. **Art foundation** — scene_tag field in DM JSON + image mapping
+3. **Tutorial → replaced with spawn-point open world** ✅ — see Campaign Architecture section below
+4. **Music system** ✅ — menu music, gameplay music, SFX all working (see Music System section)
+5. **Art foundation** ✅ — assets reorganised into subdirectories; race/class/campaign/dice/icon/splash art all bundled; GifHealthBar for animated HP
 6. **Monetisation infrastructure** — RevenueCat + IAP last, once mechanics are stable
+
+### Recently Completed (2026-03-14) ✅
+- **Menu music** — `MenuMusicManager` mounted in `App.js` (never unmounts); picks random track from `MENU_TRACKS` on launch; 1.6s fade-out on game start; respects Master × Music volume preferences
+- **Gameplay music** — `GameplayMusicManager` mounted in `DMConversationScreen`; two players (exploration, combat); crossfade driven by `combatState`; `gameMusic.js` singleton with `SELECTED_TRACKS` (exploration + combat tracks live)
+- **SFX system** — `SfxManager` mounted in `DMConversationScreen`; 4 sounds live: `dice_roll`, `dice_land_success`, `dice_land_fail`, `combat_start`; `sfx.js` singleton; add new sounds by dropping MP3 into `src/assets/sfx/` and adding a player in `SfxManager`
+- **Settings modal** — `SettingsModal` component; bottom sheet with drag-to-scrub sliders for Master / Music / SFX volume; accessible from main menu, campaign select, and character creation via ⚙ icon
+- **Preferences persistence** — `preferences` object in `GameContext` (`diceSkin`, `masterVolume`, `musicVolume`, `sfxVolume`); loaded on mount from `savePreferences`/`loadPreferences` in `storage.js`; saved immediately on change
+- **Dice skins** — 5 skins on main menu selector (Classic, Graystone, Obsidian, Dragon, Crystal); persisted in preferences; art at `src/assets/dice/DICE_<skin>_face.png`; 3D GLB model at `src/assets/dice/DiceSet.glb`
+- **Art asset reorganisation** — all art moved from flat `src/assets/` into typed subdirectories: `campaigns/`, `classes/`, `dice/`, `icons/`, `races/`, `splash/`, `ui/`, `sfx/`, `music/`; `src/assets/index.js` exports `RaceArt`, `ClassArt`, `CampaignArt`, `SpawnArt`, `DiceFaceArt`, `IconArt`, `Splashes`
+- **GifHealthBar** — `src/components/GifHealthBar.js`; renders correct frame from extracted GIF frames based on HP%; falls back to plain colour bar if frames not extracted; extraction script at `scripts/extract-health-bar-frames.js`
+- **Campaign architecture rebuilt** — tutorial removed entirely; replaced with spawn-point model (see Campaign Architecture section); contextual mechanic nudges replace tutorial beats
+- **World bible** — `src/constants/world.js`; Araxys world / Aranthos kingdom; 6 regions with dominant races and faction control; 5 factions (Crown, Broken Chain, Deep Accord, Thornbound, Crimson Veil); used as DM reference context
+- **Character creation overhaul** — race/class art portraits, recommended stat presets per class, per-stat rationale tooltips, `SettingsModal` accessible from header
+- **seenMechanics nudge system** — `seenMechanics: Set` in GameContext; tracks which mechanics the player has encountered this session (`skill_check`, `combat`, `inventory`); `DMConversationScreen` injects contextual nudges at message thresholds (skill_check nudge at turn 3, combat nudge at turn 6, inventory nudge at turn 12) if the mechanic hasn't fired naturally
 
 ---
 
@@ -250,7 +264,7 @@ Combat is launch-ready when:
 - [x] Dice roller shows context labels and hides advantage/disadvantage unless triggered
 - [x] Combat Action Panel replaces freeform text input during `COMBAT_STATE`
 - [x] Player can flee combat cleanly
-- [ ] Basic conditions (Poisoned, Frightened, Stunned, Prone) apply/remove correctly and show in HUD
+- [x] Basic conditions (Poisoned, Frightened, Stunned, Prone) apply/remove correctly and show in HUD
 
 ---
 
@@ -265,7 +279,45 @@ The five levers that reduce API calls without reducing experience:
 4. **NPC dialogue tree caching** — on first encounter, AI generates 3–4 option dialogue tree and NPC personality object. Cached. Subsequent visits = 0 API calls for standard topics.
 5. **Exploration pacing** — non-combat travel between known locations uses local fast-travel with cached ambient text. AI reserved for: new locations, story beats, combat initiation, major decisions.
 
-### Tutorial — Beat Design & Scope
+### Campaign Architecture (Current)
+The separate tutorial campaign has been removed. Mechanics are now introduced contextually via the **seenMechanics nudge system** in `DMConversationScreen`. Players jump directly into the world.
+
+**Spawn-point model** (`src/constants/campaigns.js`):
+- `SPAWN_POINTS` array: 5 named starting locations + 1 "Fate Decides" random option
+- Each spawn point has: `locationId`, `name`, `city`, `region`, `regionId`, `tagline`, `difficulty`, `dmOpeningDirective`
+- On selection, `CampaignSelectScreen` builds a variant of the `open_world` base campaign with the spawn point's `dmOpeningDirective` prepended to `dmBrief`
+- The `open_world` base campaign drives all spawns — world lore and NPC name pool are shared
+
+**Spawn points:**
+| ID | Location | Region | Difficulty |
+|---|---|---|---|
+| `spawn_deepwell` | The Muddy Boot, Deepwell | The Lowfen | Introduction |
+| `spawn_crestmere` | The Silver Anchor, Crestmere | Tidebreak Coast | Standard |
+| `spawn_aldenmere` | The Whetted Compass, Aldenmere | The Heartlands | Challenging |
+| `spawn_hunters_rest` | Hunter's Rest, Thornwood Edge | The Thornwood | Challenging |
+| `spawn_embers_end` | Ember's End, Emberveil Border | The Emberveil | Challenging |
+| `spawn_random` | Fate Decides | Unknown | Variable |
+
+**Other campaigns** (on the `CAMPAIGNS` list, selectable if surfaced via deep link / future UI):
+- `dungeon_crawl` — "The Vault of Forgotten Kings" (Greybeard persona, 3-level dungeon)
+- `random` — Chronicler generates a fresh premise from scratch, in-media-res
+
+**seenMechanics nudge system:**
+- `seenMechanics: Set` in GameContext tracks `'skill_check'`, `'combat'`, `'inventory'`
+- `markMechanicSeen(key)` dispatches `MARK_MECHANIC_SEEN`
+- `DMConversationScreen` injects nudges into the DM system prompt at thresholds:
+  - Turn 3: skill check nudge (if `skill_check` not yet seen)
+  - Turn 6: combat nudge (if `skill_check` seen but `combat` not yet seen)
+  - Turn 12: inventory nudge (if `combat` seen but `inventory` not yet seen)
+- Mechanics can also fire naturally before the threshold — nudges are skipped if already seen
+
+**Note on Message Counting:**
+The `isTutorial` / tutorial-exempt-from-counter logic still exists in `GameContext` but is no longer actively used since the tutorial was removed. It can be repurposed or removed.
+
+### Former Tutorial Notes (archived)
+The "A Warden's Errand" tutorial beat design (Ashwick, Ortina, Mik the goblin, the locket, Torven, Firimbel destination) remains in CLAUDE.md below as world lore and campaign canon. The locket/Firimbel storyline is still the intended first authored campaign content. The Mik mechanic and dual-condition callback gate were built but the tutorial screen is no longer the entry point.
+
+### Tutorial — Beat Design & Scope (ARCHIVED — no longer the entry flow)
 Tutorial is scoped by **narrative beats**, not message count. Target: 28–35 minutes of play. No message cap. Tutorial does not decrement the free tier counter. A player who completes this tutorial is the exact player who pays — do not optimise for speed.
 
 **The 10 required beats:**
@@ -387,24 +439,41 @@ On campaign creation, inject a `name_pool` of 40–60 culturally appropriate nam
 Each is a tone paragraph prepended to the base system prompt. Tutorial is locked to Chronicler. Persona selection shown after campaign pick (modal sheet).
 
 ### Music System
-Driven by the `tone` field in DM JSON. Client reads the field and transitions audio state. No ML inference — pure state machine.
+**Current implementation (shipped 2026-03-14):**
 
-**Stem architecture (16 files → 256+ combinations):**
-- 4 environments: dungeon/underground, wilderness/travel, settlement/tavern, planar/mystical
-- 4 stem layers per environment: ambient (always on), rhythmic (exploration+), melodic (story peaks), intensity (combat only)
-- 3 one-shot stings: combat start, critical hit, downed/death
-- Transitions: 3–4 second crossfade between states. Never hard cut.
-- Storage: compressed OGG bundled in app. ~50–80MB. Zero marginal cost. Works offline.
+**Menu music** (`src/utils/menuMusic.js` + `src/components/MenuMusicManager.js`):
+- `MenuMusicManager` mounted once in `App.js` — never unmounts
+- Picks random track from `MENU_TRACKS` array on launch; loops
+- `startMenuMusic()` / `stopMenuMusic({ fade })` singleton functions for screen components
+- 1.6s fade-out (20 steps × 80ms) when transitioning to gameplay
+- Add tracks: drop `MENU_XX.mp3` into `src/assets/music/` and uncomment in `MENU_TRACKS`
 
-**Tone → state mapping:**
-- `exploration` → ambient + rhythmic
-- `tension` → ambient + rhythmic + intensity (low)
-- `combat_light` / `combat_heavy` / `boss` → all layers, escalating intensity
-- `discovery` → ambient + melodic
-- `victory` → short victory sting, then ambient
-- `somber` → ambient only, slow
-- `tavern` → distinct tavern loop
-- `travel` → light ambient + rhythmic
+**Gameplay music** (`src/utils/gameMusic.js` + `src/components/GameplayMusicManager.js`):
+- `GameplayMusicManager` mounted in `DMConversationScreen`
+- Two `useAudioPlayer` instances: exploration track + combat track
+- Crossfades on `combatState` change (1.5s fade-out, 0.6s fade-in)
+- `SELECTED_TRACKS` in `gameMusic.js` — swap tracks by changing the `require()` there
+- Singleton: `startGameMusic()`, `stopGameMusic({ fade })`, `setSituation(situation)`
+- Situations: `'exploration'` | `'combat'` (derived from `combatState` via `combatStateToSituation`)
+
+**SFX** (`src/utils/sfx.js` + `src/components/SfxManager.js`):
+- `SfxManager` mounted in `DMConversationScreen`
+- One `useAudioPlayer` per SFX key (hooks must be unconditional)
+- Live sounds: `dice_roll`, `dice_land_success`, `dice_land_fail`, `combat_start`
+- Call: `playSfx('dice_roll')` from anywhere
+- Add sounds: drop MP3 in `src/assets/sfx/`, add to `SFX_SOURCES` in `sfx.js`, add `useAudioPlayer` hook in `SfxManager`
+
+**All audio respects preferences** — `masterVolume × musicVolume` for music, `masterVolume × sfxVolume` for SFX; both 0–100 → 0–1 float
+
+**Future stem architecture (not yet built):**
+- 4 environments × 4 stem layers = 16 files → 256+ combinations
+- Transitions: 3–4 second crossfades. Never hard cut.
+- Storage: compressed OGG bundled in app. ~50–80MB. Works offline.
+
+**Tone → situation mapping** (for future stem system):
+- `exploration` / `travel` → exploration situation
+- `tension` / `combat_light` / `combat_heavy` / `boss` → combat situation
+- `discovery` / `victory` / `somber` / `tavern` → exploration situation (currently)
 
 ### Art & Content Strategy
 All visual content is AI-generated. The style guide (one master prompt: dark candlelit fantasy, gritty realism, mobile-optimised framing) is applied as prefix to all generation. Consistency is the output.
@@ -473,38 +542,61 @@ Key state fields beyond character:
 
 ```
 chronicle-rpg/
-├── App.js                          ← Navigation root, GameProvider wrapper
+├── App.js                          ← Navigation root, GameProvider wrapper, MenuMusicManager mount
 ├── app.json                        ← Expo config, SDK 55
 ├── CLAUDE.md                       ← This file
-├── setup.md                        ← Local environment setup guide
+├── scripts/
+│   └── extract-health-bar-frames.js ← One-time script: extracts GIF frames to PNG for GifHealthBar
 └── src/
+    ├── assets/
+    │   ├── campaigns/              ← CAMPAIGN_ashen/court/glass/hollow/random.png
+    │   ├── classes/                ← CLASS_cleric/fighter/paladin/ranger/rogue/wizard.png
+    │   ├── dice/                   ← DICE_<skin>_face.png (5 skins) + DiceSet.glb (3D model)
+    │   ├── icons/                  ← ICON_chronicler/d20/inventory/map/scroll/shield/skull/sword.png
+    │   ├── music/                  ← MENU_01.mp3, COMBAT_01.mp3, EXPLORATION_01/02.mp3
+    │   ├── races/                  ← RACE_dwarf/elf/halfling/human/orc/shadowborn.png
+    │   ├── sfx/                    ← SFX_COMBAT_START/DICE_LAND_FAIL/DICE_LAND_SUCCESS/DICE_ROLL.mp3
+    │   ├── splash/                 ← SPLASH_01–05.png
+    │   ├── ui/                     ← health_bar.gif + health_bar_frames/
+    │   └── index.js                ← Named exports: RaceArt, ClassArt, CampaignArt, SpawnArt,
+    │                                  DiceFaceArt, IconArt, Splashes
     ├── constants/
     │   ├── theme.js                ← Colors, spacing, shadows (dark medieval palette)
     │   ├── races.js                ← 6 races with stat bonuses and traits
     │   ├── classes.js              ← 6 classes with full DnD 5e mechanics
-    │   ├── campaigns.js            ← Campaign definitions + tutorial beat scripts + name_pool per campaign
-    │   └── personas.js             ← 4 DM persona presets with system prompt tone
+    │   ├── campaigns.js            ← CAMPAIGNS array + SPAWN_POINTS array + name_pool per campaign
+    │   ├── personas.js             ← 4 DM persona presets with system prompt tone
+    │   └── world.js                ← Araxys world bible: REGIONS, FACTIONS, CITIES (static reference)
     ├── context/
     │   └── GameContext.js          ← Full game state, reducer, action creators
-    │                                  Combat actions: START_COMBAT, ADVANCE_TURN, APPLY_DAMAGE, END_COMBAT
-    │                                  World actions: UPDATE_WORLD_REGISTRY, SET_ROLLING_SUMMARY
+    │                                  Combat: START_COMBAT, ADVANCE_TURN, APPLY_DAMAGE, END_COMBAT
+    │                                  World: UPDATE_WORLD_REGISTRY, SET_ROLLING_SUMMARY
+    │                                  Prefs: SET_PREFERENCES (persisted separately from game save)
+    │                                  Mechanics: MARK_MECHANIC_SEEN (seenMechanics Set)
     ├── utils/
     │   ├── dice.js                 ← All DnD 5e math (point buy, modifiers, checks, combat resolution)
     │   ├── claude.js               ← All API calls (DM, summary, Chronicle Card)
-    │   ├── combat.js               ← Combat state machine logic (NEW — Build Now)
-    │   ├── music.js                ← Tone → audio state mapping + crossfade logic (NEW — Build Now)
-    │   └── storage.js              ← Save/load via expo-file-system (autosave.json in documentDirectory)
+    │   ├── combat.js               ← Combat state machine logic
+    │   ├── menuMusic.js            ← Menu music singleton (delegates to MenuMusicManager)
+    │   ├── gameMusic.js            ← Gameplay music singleton (delegates to GameplayMusicManager)
+    │   ├── sfx.js                  ← SFX singleton (delegates to SfxManager)
+    │   ├── progress.js             ← resetProgress helper
+    │   └── storage.js              ← Save/load via expo-file-system; savePreferences/loadPreferences
     ├── components/
     │   ├── DMMessage.js            ← Renders narration/NPC/system text with accent bars
-    │   ├── DiceRoller.js           ← Pseudo-3D die, forced roll, peek mode
+    │   ├── DiceRoller.js           ← Pseudo-3D die, forced roll, peek mode, context labels
     │   ├── ChronicleCard.js        ← Shareable session summary card
-    │   ├── CombatHUD.js            ← Turn order, enemy HP bars, conditions (NEW — Build Now)
-    │   └── ExamineOverlay.js       ← Local tappable objects from last DM message (NEW — Build Now)
+    │   ├── CombatHUD.js            ← Turn order, enemy HP bars, conditions
+    │   ├── GifHealthBar.js         ← Frame-based animated HP bar (falls back to plain bar)
+    │   ├── MenuMusicManager.js     ← expo-audio hook component; mounted once in App.js
+    │   ├── GameplayMusicManager.js ← expo-audio hook component; mounted in DMConversationScreen
+    │   ├── SfxManager.js           ← expo-audio hook component; mounted in DMConversationScreen
+    │   └── SettingsModal.js        ← Bottom-sheet volume sliders (Master / Music / SFX)
     └── screens/
-        ├── MainMenuScreen.js           ← Title screen; Continue/New Game/Erase Save; shows save card
-        ├── CampaignSelectScreen.js     ← Campaign grid + persona selector modal
-        ├── CharacterCreationScreen.js  ← 4-step wizard (Race → Class → Stats → Name)
-        └── DMConversationScreen.js     ← Main game screen
+        ├── MainMenuScreen.js           ← Title; Continue/New/Erase; dice skin selector; How to Play
+        ├── CampaignSelectScreen.js     ← Spawn-point grid (region cards); Settings icon in header
+        ├── CharacterCreationScreen.js  ← 4-step wizard; race/class art; recommended stats; rationale
+        └── DMConversationScreen.js     ← Main game screen; GameplayMusicManager + SfxManager mounted here
 ```
 
 ---
@@ -524,8 +616,12 @@ chronicle-rpg/
 - Attack resolution single-roll — replaced with two-phase flow: attack d20 → damage die (separate roller, sequential)
 
 ## Known Issues Active
-- **Conditions not wired to combatTurnOrder** — `applyStateUpdates` only updates `character.conditions`; DM JSON `conditions_applied`/`conditions_removed` are not propagated to `combatTurnOrder[n].conditions` for enemies or to the player's turn order entry. Enemy condition chips in HUD won't update mid-combat. Being fixed in conditions workstream.
-- **Campaign memory not injected at session start** — `campaignMemory` is generated and persisted at Chronicle Card end, but `buildSystemPrompt` doesn't yet inject it via `## Prior Session Memory` block when loading a continued session.
+*(none — all previously tracked issues resolved)*
+
+**Resolved (2026-03-15):**
+- ~~Conditions not wired to combatTurnOrder~~ — Fixed: `applyStateUpdates` now calls `updateCombatantConditions` for player (by `targetId: 'player'`) and enemies (via new `enemy_conditions` field). `UPDATE_COMBATANT_CONDITIONS` reducer updates both `combatTurnOrder` and `activeEnemies`. Enemy conditions now flow from DM JSON → HUD chips.
+- ~~Campaign memory not injected at session start~~ — Was already wired: `buildSystemPrompt` accepts `campaignMemory` and emits `## Prior Session Memory` block; `callDM` passes it through; `DMConversationScreen` destructures it from `useGame()`; `saveGame` persists it; `LOAD_GAME` restores it.
+- ~~`isTutorial` flag orphaned~~ — Never added to the codebase; only existed in CLAUDE.md. No cleanup needed.
 
 ---
 
@@ -630,28 +726,41 @@ When it's the player's turn:
 ## World Lore & Campaign Canon
 
 ### The World (Established)
-Do not over-specify. The AI DM fills in texture. These are the fixed anchors that must stay consistent across all campaigns and the tutorial.
+**World:** Araxys | **Kingdom:** Aranthos
 
-**Ashwick** — A small village. Quiet, slightly worn. The tutorial is set here. Ortina runs the inn. Torven is a retired scribe who knows old seals and noble crests. The tutorial ends with the player leaving Ashwick for Firimbel.
+Canonical data lives in `src/constants/world.js`. Do not over-specify — the AI DM fills in texture. These are the fixed anchors for consistency across all campaigns.
 
-**Firimbel** — A large city, the primary setting for the first authored campaign. Currently in a state of political unrest driven by a three-way power struggle. Has a history significant enough that old noble bloodlines still carry legal and symbolic weight.
+**Regions (6):**
+| Region | Dominant Race | Faction Control | Tone |
+|---|---|---|---|
+| The Heartlands | Human | Crown | stable_anxious |
+| The Thornwood | Elf | Thornbound | mysterious_beautiful |
+| The Ashpeaks | Dwarf | Deep Accord | industrial_proud |
+| The Lowfen | Halfling | None | friendly_hidden_depths |
+| The Scorched Reach | Orc | Broken Chain | harsh_proud |
+| The Tidebreak Coast | Mixed | Crimson Veil (shadow) | cosmopolitan_flexible |
 
-**The Locket** — Found in the cellar beneath the Ashwick mill during the tutorial. Bears a Firimbel noble crest — an old bloodline marker. Torven recognises it as significant but dangerous and directs the player to find Ulthur in Firimbel. The locket identifies a living heir whose existence could resolve (or detonate) the conflict in Firimbel. The heir is unnamed and unknown to themselves. The locket must never be fully explained in the tutorial — only enough to create a destination.
+**Factions (5, from `world.js`):**
+- **The Crown** — established monarchic authority over the Heartlands; anxious about its grip on power
+- **The Broken Chain** — orc/half-orc liberation movement rooted in the Scorched Reach; grievances are legitimate
+- **The Deep Accord** — dwarf-majority mining and trade guild controlling the Ashpeaks; pragmatic, proud
+- **The Thornbound** — elven collective in the Thornwood; ancient, unwelcoming to outsiders, deeply territorial
+- **The Crimson Veil** — shadow network along the Tidebreak Coast; deals with everyone, loyal to none
 
-### The Three Factions (Firimbel)
+**Spawn-point cities:** Deepwell (Lowfen), Crestmere (Tidebreak), Aldenmere (Heartlands capital), Thornwood Edge, Ember's End (Emberveil border)
 
-**Free Peoples Assembly**
-Good-leaning. A democratic coalition of multiple races. Legitimate, hopeful, slow — as democracies are. Wants to find and protect the heir, whose existence would legitimise their authority and provide a legal resolution to the conflict. Vulnerable to internal fracture and manipulation. Players who align with them are doing the right thing, messily.
+### Legacy Lore (Ashwick / Firimbel — archived campaign canon)
+The Ashwick/Firimbel storyline was designed for the original tutorial + Campaign 1. It remains valid world content but is no longer the active entry point.
 
-**The Sundered**
-Evil-leaning. An orc-majority warband. The name implies history — something broken or cast out, not merely aggressive. They have grievances that predate the current conflict, which the AI DM should honour. They want the heir dead or discredited — a legitimate heir destroys whatever claim they are pressing. Not cartoonishly evil; dangerous and wounded.
+**Ashwick** — Small village. Ortina runs the inn. Torven is a retired scribe who knows old seals and noble crests.
 
-**Stonehelm Guild**
-Neutral. Dwarf-majority merchant guild. Has been in Firimbel longer than the conflict and intends to outlast it. Will deal with anyone. Wants to control access to the heir — the ultimate leverage position. Their neutrality is principled self-interest, not cowardice. The player will likely negotiate with them most.
+**Firimbel** — Large city in political unrest. Three-way power struggle: Free Peoples Assembly (democratic, good-leaning), The Sundered (orc-majority warband, legitimate grievances), Stonehelm Guild (dwarf merchant guild, neutral self-interest).
 
-**Ulthur** — A figure in Firimbel who knows the locket's full significance and the heir's identity. Not the heir themselves. Has reasons for staying quiet this long. His agenda is his own. He is the player's first major contact in Firimbel and the keeper of the secret.
+**The Locket** — Found in the Ashwick mill cellar. Bears a Firimbel noble crest. Torven directs the player to Ulthur in Firimbel. Identifies a living heir whose existence could resolve or detonate the conflict.
 
-**The heir** — Unnamed. A living person in Firimbel who does not know their own lineage. The DM should protect this secret until the player earns the reveal through the campaign. The identity is never specified in any system prompt — the DM generates it dynamically and holds it consistently via sessionFlags once established.
+**Ulthur** — Keeper of the locket's secret. Not the heir. His own agenda.
+
+**The heir** — Unnamed. Unaware of their lineage. DM generates identity dynamically, holds via sessionFlags.
 
 ---
 

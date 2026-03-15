@@ -45,9 +45,15 @@ export function rollInitiative(entities) {
 
 // ─── Attack resolution ────────────────────────────────────────────────────────
 // attackBonus: proficiency + ability modifier
+// advantage: 'none' | 'advantage' | 'disadvantage'
 // Returns { roll, total, hit, isCrit, isFumble }
-export function resolveAttack(attackBonus, targetAC) {
-  const dieRoll = roll(20);
+export function resolveAttack(attackBonus, targetAC, advantage = 'none') {
+  const roll1 = roll(20);
+  const dieRoll = advantage === 'advantage'
+    ? Math.max(roll1, roll(20))
+    : advantage === 'disadvantage'
+    ? Math.min(roll1, roll(20))
+    : roll1;
   const isCrit = dieRoll === 20;
   const isFumble = dieRoll === 1;
   const total = dieRoll + attackBonus;

@@ -170,6 +170,17 @@ export default function DMConversationScreen({ navigation }) {
       });
       updateCombatantConditions({ targetId: 'player', conditionsApplied: [], conditionsRemoved: updates.conditions_removed });
     }
+    if (updates.enemy_conditions?.length) {
+      updates.enemy_conditions.forEach(ec => {
+        if (ec?.name) {
+          updateCombatantConditions({
+            targetName: ec.name,
+            conditionsApplied: Array.isArray(ec.apply) ? ec.apply : [],
+            conditionsRemoved: Array.isArray(ec.remove) ? ec.remove : [],
+          });
+        }
+      });
+    }
     if (updates.session_flags) setSessionFlags(updates.session_flags);
     if (updates.npc_memory?.length) updates.npc_memory.forEach(npc => upsertNPC(npc));
   };
@@ -334,7 +345,26 @@ export default function DMConversationScreen({ navigation }) {
       return;
     }
 
-    const attackResult = resolveAttack(enemy.attackBonus, character?.AC || 10);
+    // Stunned: skip turn, log it
+    if (activeCombatant.conditions?.includes('Stunned')) {
+      addMessage({
+        id: `stunned_${Date.now()}`,
+        role: 'assistant',
+        content: { system_text: `${enemy.name} is stunned and cannot act this turn.` },
+        personaName: selectedPersona?.name,
+        personaEmoji: selectedPersona?.emoji,
+        timestamp: Date.now(),
+      });
+      advanceTurn();
+      return;
+    }
+
+    // Prone player → enemy has advantage on melee attacks
+    const playerCombatant = combatTurnOrder.find(c => c.isPlayer);
+    const playerIsProne = playerCombatant?.conditions?.includes('Prone') || character?.conditions?.includes('Prone');
+    const attackAdvantage = playerIsProne ? 'advantage' : 'none';
+
+    const attackResult = resolveAttack(enemy.attackBonus, character?.AC || 10, attackAdvantage);
     let damage = 0;
     let playerHpAfter = character?.currentHP || 0;
 
@@ -349,8 +379,8 @@ export default function DMConversationScreen({ navigation }) {
     const logText = attackResult.isCrit
       ? `${enemy.name} lands a CRITICAL HIT for ${damage} damage! [Your HP: ${playerHpAfter}/${character?.maxHP}]`
       : attackResult.hit
-      ? `${enemy.name} strikes you for ${damage} damage. (Roll: ${attackResult.roll}+${enemy.attackBonus}=${attackResult.total} vs AC ${character?.AC}) [Your HP: ${playerHpAfter}/${character?.maxHP}]`
-      : `${enemy.name} swings at you but misses. (Roll: ${attackResult.roll}+${enemy.attackBonus}=${attackResult.total} vs AC ${character?.AC})`;
+      ? `${enemy.name} strikes you for ${damage} damage.${playerIsProne ? ' (advantage — you are prone)' : ''} (Roll: ${attackResult.roll}+${enemy.attackBonus}=${attackResult.total} vs AC ${character?.AC}) [Your HP: ${playerHpAfter}/${character?.maxHP}]`
+      : `${enemy.name} swings at you but misses.${playerIsProne ? ' (advantage — you are prone)' : ''} (Roll: ${attackResult.roll}+${enemy.attackBonus}=${attackResult.total} vs AC ${character?.AC})`;
 
     addMessage({
       id: `enemy_turn_${Date.now()}`,
@@ -502,6 +532,7 @@ export default function DMConversationScreen({ navigation }) {
 
   const scrollRef = useRef(null);
   const typingAnim = useRef(new Animated.Value(0)).current;
+  const combatPanelAnim = useRef(new Animated.Value(60)).current;
 
   useEffect(() => {
     if (messages.length === 0) sendOpeningMessage();
@@ -524,6 +555,20 @@ export default function DMConversationScreen({ navigation }) {
       typingAnim.setValue(0);
     }
   }, [isLoading]);
+
+  // Spring-animate the combat action panel into view when it becomes the player's turn
+  useEffect(() => {
+    const active = combatTurnOrder[activeTurnIndex];
+    if (combatState === 'COMBAT_STATE' && active?.isPlayer) {
+      combatPanelAnim.setValue(60);
+      Animated.spring(combatPanelAnim, {
+        toValue: 0,
+        useNativeDriver: true,
+        tension: 120,
+        friction: 9,
+      }).start();
+    }
+  }, [activeTurnIndex, combatState]); // eslint-disable-line react-hooks/exhaustive-deps
 
   const triggerChronicle = async () => {
     setIsGeneratingSummary(true);
@@ -944,7 +989,7 @@ export default function DMConversationScreen({ navigation }) {
 
         {/* ── Combat Action Panel (replaces freeform input during COMBAT_STATE) ── */}
         {combatState === 'COMBAT_STATE' && !diceVisible && !isAtLimit && (
-          <View style={styles.combatPanel}>
+          <Animated.View style={[styles.combatPanel, isPlayerTurn && { transform: [{ translateY: combatPanelAnim }] }]}>
             {!isPlayerTurn ? (
               // Enemy turn: tap to auto-resolve (no API call)
               <TouchableOpacity
@@ -1039,7 +1084,7 @@ export default function DMConversationScreen({ navigation }) {
                 </View>
               </>
             )}
-          </View>
+          </Animated.View>
         )}
 
         {/* ── Input bar ── */}
