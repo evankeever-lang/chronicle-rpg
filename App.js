@@ -4,7 +4,15 @@ import { NavigationContainer } from '@react-navigation/native';
 import { createStackNavigator } from '@react-navigation/stack';
 import { StatusBar } from 'expo-status-bar';
 import { GameProvider } from './src/context/GameContext';
+import MenuMusicManager from './src/components/MenuMusicManager';
+import { Component } from 'react';
 import MainMenuScreen from './src/screens/MainMenuScreen';
+
+class AudioErrorBoundary extends Component {
+  state = { failed: false };
+  static getDerivedStateFromError() { return { failed: true }; }
+  render() { return this.state.failed ? null : this.props.children; }
+}
 import CampaignSelectScreen from './src/screens/CampaignSelectScreen';
 import CharacterCreationScreen from './src/screens/CharacterCreationScreen';
 import DMConversationScreen from './src/screens/DMConversationScreen';
@@ -14,6 +22,7 @@ const Stack = createStackNavigator();
 export default function App() {
   return (
     <GameProvider>
+      <AudioErrorBoundary><MenuMusicManager /></AudioErrorBoundary>
       <NavigationContainer>
         <StatusBar style="light" />
         <Stack.Navigator

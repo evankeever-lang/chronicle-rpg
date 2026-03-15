@@ -15,7 +15,7 @@ import {
 import { LinearGradient } from 'expo-linear-gradient';
 import { loadGame, deleteSave, timeSince } from '../utils/storage';
 import { startMenuMusic } from '../utils/menuMusic';
-import { Splashes, DiceArt } from '../assets';
+import { Splashes, DiceFaceArt } from '../assets';
 import { resetProgress } from '../utils/progress';
 import { useGame } from '../context/GameContext';
 import { COLORS, FONTS, FONT_SIZES, SPACING, RADIUS, SHADOWS } from '../constants/theme';
@@ -23,10 +23,10 @@ import SettingsModal from '../components/SettingsModal';
 
 const DICE_SKINS = [
   { key: 'default',   label: 'Classic',   image: null },
-  { key: 'graystone', label: 'Graystone', image: DiceArt.graystone },
-  { key: 'obsidian',  label: 'Obsidian',  image: DiceArt.obsidian  },
-  { key: 'dragon',    label: 'Dragon',    image: DiceArt.dragon    },
-  { key: 'crystal',   label: 'Crystal',   image: DiceArt.crystal   },
+  { key: 'graystone', label: 'Graystone', image: DiceFaceArt.graystone },
+  { key: 'obsidian',  label: 'Obsidian',  image: DiceFaceArt.obsidian  },
+  { key: 'dragon',    label: 'Dragon',    image: DiceFaceArt.dragon    },
+  { key: 'crystal',   label: 'Crystal',   image: DiceFaceArt.crystal   },
 ];
 
 const HOW_TO_PLAY = [

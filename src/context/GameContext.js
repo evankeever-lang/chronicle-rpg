@@ -81,7 +81,7 @@ const initialState = {
   mainPlotStage: 'hidden', // 'hidden' | 'stirring' | 'fracturing' | 'breaking' | 'resolved'
 
   // ── User preferences ──────────────────────────────────────────────────────────
-  preferences: { diceSkin: 'default', masterVolume: 80, musicVolume: 70, sfxVolume: 80 },
+  preferences: { diceSkin: 'default', masterVolume: 100, musicVolume: 90, sfxVolume: 80 },
 };
 
 function gameReducer(state, action) {
