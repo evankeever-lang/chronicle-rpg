@@ -3,7 +3,7 @@ import * as FileSystem from 'expo-file-system/legacy';
 const SAVES_DIR = FileSystem.documentDirectory + 'saves/';
 const AUTO_SAVE_PATH = SAVES_DIR + 'autosave.json';
 const PREFS_PATH    = SAVES_DIR + 'preferences.json';
-const SAVE_VERSION = 2;
+const SAVE_VERSION = 3;
 
 async function ensureDir() {
   const info = await FileSystem.getInfoAsync(SAVES_DIR);
@@ -42,6 +42,12 @@ export async function saveGame(state) {
       visitedLocations: state.visitedLocations || [],
       npcDispositions: state.npcDispositions || {},
       mainPlotStage: state.mainPlotStage || 'hidden',
+      // Phase 2: character systems
+      equipment: state.equipment || null,
+      xp: state.xp || 0,
+      xpToNext: state.xpToNext || 300,
+      pendingLevelUp: state.pendingLevelUp || false,
+      sessionNotes: state.sessionNotes || '',
     };
     await FileSystem.writeAsStringAsync(AUTO_SAVE_PATH, JSON.stringify(saveData));
     return saveData;
@@ -60,10 +66,9 @@ export async function loadGame() {
     if (!info.exists) return null;
     const json = await FileSystem.readAsStringAsync(AUTO_SAVE_PATH);
     const data = JSON.parse(json);
-    // Accept v1 saves (missing new fields) — GameContext.LOAD_GAME spreads over
-    // initialState so missing fields get their defaults automatically.
-    // Only discard saves from truly incompatible future versions.
-    if (data.version !== SAVE_VERSION && data.version !== 1) return null;
+    // Accept v1/v2 saves — GameContext.LOAD_GAME spreads over initialState so missing
+    // fields get their defaults automatically. Only discard future-incompatible versions.
+    if (data.version !== SAVE_VERSION && data.version !== 2 && data.version !== 1) return null;
     return data;
   } catch (e) {
     console.warn('[Chronicle] Load failed:', e);

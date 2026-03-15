@@ -1,6 +1,15 @@
-import React from 'react';
-import { View, Text, StyleSheet } from 'react-native';
+import React, { useState, useEffect } from 'react';
+import { View, Text, Animated, StyleSheet } from 'react-native';
 import { COLORS, FONTS, FONT_SIZES, SPACING, RADIUS } from '../constants/theme';
+import useTypewriter from '../hooks/useTypewriter';
+import { useGame } from '../context/GameContext';
+
+const TEXT_SPEED_MS = { slower: 300, slow: 220, normal: 171, fast: 100, faster: 55 };
+
+function useMsPerWord() {
+  const { preferences } = useGame();
+  return TEXT_SPEED_MS[preferences?.textSpeed] ?? 171;
+}
 
 // Visual language:
 // Narration  — the world speaking. Warm parchment background, serif prose, no speaker label.
@@ -8,7 +17,57 @@ import { COLORS, FONTS, FONT_SIZES, SPACING, RADIUS } from '../constants/theme';
 // System     — mechanical outcomes. Bordered card, icon + label.
 // Player     — right-aligned bubble.
 
-export default function DMMessage({ message }) {
+function AssistantMessage({ content: c, isNew }) {
+  const [narrationDone, setNarrationDone] = useState(!isNew);
+  // Which NPC block is currently active; -1 = none yet, advances one-by-one as each finishes.
+  // If there's no narration, start at 0 immediately so the first NPC block isn't gated forever.
+  const [activeNpcIndex, setActiveNpcIndex] = useState(() => {
+    if (!isNew) return Infinity;
+    return c.narration ? -1 : 0;
+  });
+
+  // Normalize npc_dialogue to array
+  const npcLines = Array.isArray(c.npc_dialogue)
+    ? c.npc_dialogue.filter(n => n?.text)
+    : (c.npc_dialogue?.text ? [c.npc_dialogue] : []);
+
+  // When narration finishes, unlock the first NPC block
+  const handleNarrationDone = () => {
+    setNarrationDone(true);
+    setActiveNpcIndex(0);
+  };
+
+  return (
+    <View>
+      {!!c.narration && (
+        <NarrationBlock
+          text={c.narration}
+          isNew={isNew}
+          onDone={handleNarrationDone}
+        />
+      )}
+      {npcLines.map((npc, i) => {
+        const active = isNew ? activeNpcIndex >= i : true;
+        return (
+          <NpcBlock
+            // Key changes when active flips true, forcing a fresh mount with clean hook state
+            key={`${i}_${active}`}
+            name={npc.name}
+            text={npc.text}
+            active={active}
+            isNew={isNew}
+            // Only wire onDone when this block is active — inactive blocks have isDone=true
+            // immediately (non-animated path) and would prematurely advance the index otherwise
+            onDone={isNew && active ? () => setActiveNpcIndex(i + 1) : undefined}
+          />
+        );
+      })}
+      {!!c.system_text && <SystemBlock content={c.system_text} />}
+    </View>
+  );
+}
+
+export default function DMMessage({ message, isNew = false }) {
   // ── Player message (role === 'user') ────────────────────────────────────────
   if (message.role === 'user') {
     if (!message.displayText) return null;
@@ -31,37 +90,58 @@ export default function DMMessage({ message }) {
       return <NarrationBlock text={c} />;
     }
 
-    // Normalize npc_dialogue to array
-    const npcLines = Array.isArray(c.npc_dialogue)
-      ? c.npc_dialogue.filter(n => n?.text)
-      : (c.npc_dialogue?.text ? [c.npc_dialogue] : []);
-
-    return (
-      <View>
-        {!!c.narration && <NarrationBlock text={c.narration} />}
-        {npcLines.map((npc, i) => (
-          <NpcBlock key={i} name={npc.name} text={npc.text} />
-        ))}
-        {!!c.system_text && <SystemBlock content={c.system_text} />}
-      </View>
-    );
+    return <AssistantMessage content={c} isNew={isNew} />;
   }
 
   return null;
 }
 
-function NarrationBlock({ text }) {
+function NarrationBlock({ text, isNew, onDone }) {
+  const msPerWord = useMsPerWord();
+  const { sentences, isDone } = useTypewriter(text, isNew, msPerWord);
+
+  useEffect(() => {
+    if (isDone && isNew) onDone?.();
+  }, [isDone, isNew]); // eslint-disable-line react-hooks/exhaustive-deps
+
+  // Don't mount the background block until the first sentence is ready —
+  // this makes the block grow in sync with text rather than flashing empty
+  if (isNew && sentences.length === 0) return null;
+
   return (
     <View style={styles.narrationBlock}>
       <View style={styles.narrationBar} />
       <View style={styles.narrationContent}>
-        <Text style={styles.narrationText}>{text}</Text>
+        {isNew
+          ? (
+              <Text style={styles.narrationText}>
+                {sentences.map(({ text: s, animValue }, i) => (
+                  <Animated.Text key={i} style={{ opacity: animValue }}>
+                    {i > 0 ? ' ' : ''}{s}
+                  </Animated.Text>
+                ))}
+              </Text>
+            )
+          : <Text style={styles.narrationText}>{text}</Text>
+        }
       </View>
     </View>
   );
 }
 
-function NpcBlock({ name, text }) {
+function NpcBlock({ name, text, active, isNew, onDone }) {
+  const msPerWord = useMsPerWord();
+  const { sentences, isDone } = useTypewriter(text, active && isNew, msPerWord);
+
+  useEffect(() => {
+    if (isDone && isNew && active) onDone?.();
+  }, [isDone, isNew, active]); // eslint-disable-line react-hooks/exhaustive-deps
+
+  // Wait for previous NPC (or narration) to finish before mounting
+  if (!active && isNew) return null;
+  // Hold off showing the block until the first part is ready (no empty background flash)
+  if (isNew && sentences.length === 0) return null;
+
   return (
     <View style={styles.npcBlock}>
       <View style={styles.npcBar} />
@@ -73,7 +153,14 @@ function NpcBlock({ name, text }) {
         )}
         <Text style={styles.npcDialogue}>
           <Text style={styles.npcQuoteMark}>"</Text>
-          {text}
+          {isNew
+            ? sentences.map(({ text: s, animValue }, i) => (
+                <Animated.Text key={i} style={{ opacity: animValue }}>
+                  {i > 0 ? ' ' : ''}{s}
+                </Animated.Text>
+              ))
+            : text
+          }
           <Text style={styles.npcQuoteMark}>"</Text>
         </Text>
       </View>

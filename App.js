@@ -6,6 +6,19 @@ import { StatusBar } from 'expo-status-bar';
 import { GameProvider } from './src/context/GameContext';
 import MenuMusicManager from './src/components/MenuMusicManager';
 import { Component } from 'react';
+import {
+  useFonts,
+  Cinzel_400Regular,
+  Cinzel_700Bold,
+} from '@expo-google-fonts/cinzel';
+import {
+  EBGaramond_400Regular,
+  EBGaramond_500Medium,
+} from '@expo-google-fonts/eb-garamond';
+import {
+  CrimsonPro_400Regular,
+  CrimsonPro_600SemiBold,
+} from '@expo-google-fonts/crimson-pro';
 import MainMenuScreen from './src/screens/MainMenuScreen';
 
 class AudioErrorBoundary extends Component {
@@ -20,6 +33,17 @@ import DMConversationScreen from './src/screens/DMConversationScreen';
 const Stack = createStackNavigator();
 
 export default function App() {
+  const [fontsLoaded] = useFonts({
+    Cinzel_400Regular,
+    Cinzel_700Bold,
+    EBGaramond_400Regular,
+    EBGaramond_500Medium,
+    CrimsonPro_400Regular,
+    CrimsonPro_600SemiBold,
+  });
+
+  if (!fontsLoaded) return null;
+
   return (
     <GameProvider>
       <AudioErrorBoundary><MenuMusicManager /></AudioErrorBoundary>

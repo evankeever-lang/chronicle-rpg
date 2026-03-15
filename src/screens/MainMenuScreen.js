@@ -20,6 +20,7 @@ import { useGame } from '../context/GameContext';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { COLORS, FONTS, FONT_SIZES, SPACING, RADIUS, SHADOWS } from '../constants/theme';
 import SettingsModal from '../components/SettingsModal';
+import FlameButton from '../components/FlameButton';
 
 const DICE_SKINS = [
   { key: 'default',   label: 'Classic',   image: DiceFaceArt.classic },
@@ -70,6 +71,7 @@ export default function MainMenuScreen({ navigation }) {
 
   const fadeAnim = useRef(new Animated.Value(0)).current;
   const slideAnim = useRef(new Animated.Value(24)).current;
+  const pulseAnim = useRef(new Animated.Value(0.35)).current;
 
   useEffect(() => {
     startMenuMusic();
@@ -81,12 +83,18 @@ export default function MainMenuScreen({ navigation }) {
         Animated.timing(slideAnim, { toValue: 0, duration: 700, useNativeDriver: true }),
       ]).start();
     });
+    Animated.loop(
+      Animated.sequence([
+        Animated.timing(pulseAnim, { toValue: 0.75, duration: 1500, useNativeDriver: true }),
+        Animated.timing(pulseAnim, { toValue: 0.35, duration: 1500, useNativeDriver: true }),
+      ])
+    ).start();
   }, []);
 
   const handleContinue = () => {
     if (!saveData) return;
     loadSavedGame(saveData);
-    navigation.navigate('DMConversation');
+    navigation.reset({ index: 1, routes: [{ name: 'MainMenu' }, { name: 'DMConversation' }] });
   };
 
   const handleNewGame = () => {
@@ -146,7 +154,6 @@ export default function MainMenuScreen({ navigation }) {
 
         {/* ── Title ── */}
         <View style={styles.titleSection}>
-          <Text style={styles.eyebrow}>Project</Text>
           <Text style={styles.title}>Chronicle</Text>
           <View style={styles.dividerRow}>
             <View style={styles.dividerLine} />
@@ -156,53 +163,52 @@ export default function MainMenuScreen({ navigation }) {
           <Text style={styles.tagline}>An AI-Powered Tabletop Adventure</Text>
         </View>
 
-        {/* ── Save card ── */}
-        {hasSave && (
-          <View style={styles.saveCard}>
-            <View style={styles.saveCardHeader}>
-              <Text style={styles.saveCardLabel}>LAST SAVE</Text>
-              <Text style={styles.saveCardTime}>{timeSince(saveData.savedAt)}</Text>
-            </View>
-            <View style={styles.saveCardBody}>
-              <View style={styles.savePortrait}>
-                <Text style={styles.savePortraitInitial}>{char?.race?.name?.[0] || char?.name?.[0] || '?'}</Text>
-              </View>
-              <View style={styles.saveInfo}>
-                <Text style={styles.saveCharName}>{char?.name || 'Unknown Hero'}</Text>
-                <Text style={styles.saveCharMeta}>
-                  {[char?.race?.name, char?.class?.name].filter(Boolean).join(' ')}
-                  {char?.level ? ` · Level ${char.level}` : ''}
-                </Text>
-                <Text style={styles.saveCampaign} numberOfLines={1}>
-                  {saveData.campaign?.title || 'Unknown Campaign'}
-                </Text>
-              </View>
-            </View>
-            {saveData.sessionMessageCount > 0 && (
-              <Text style={styles.saveTurns}>{saveData.sessionMessageCount} turns played</Text>
-            )}
-          </View>
-        )}
-
-        {/* ── Main buttons ── */}
-        <View style={styles.buttons}>
+        {/* ── Middle: save card + main buttons ── */}
+        <View style={styles.middleSection}>
           {hasSave && (
-            <TouchableOpacity style={styles.btnPrimary} onPress={handleContinue} activeOpacity={0.85}>
-              <Text style={styles.btnPrimaryText}>Continue Adventure</Text>
-              <Text style={styles.btnPrimaryArrow}>→</Text>
-            </TouchableOpacity>
+            <View style={styles.saveCard}>
+              <View style={styles.saveCardHeader}>
+                <Text style={styles.saveCardLabel}>LAST SAVE</Text>
+                <Text style={styles.saveCardTime}>{timeSince(saveData.savedAt)}</Text>
+              </View>
+              <View style={styles.saveCardBody}>
+                <View style={styles.savePortrait}>
+                  <Text style={styles.savePortraitInitial}>{char?.race?.name?.[0] || char?.name?.[0] || '?'}</Text>
+                </View>
+                <View style={styles.saveInfo}>
+                  <Text style={styles.saveCharName}>{char?.name || 'Unknown Hero'}</Text>
+                  <Text style={styles.saveCharMeta}>
+                    {[char?.race?.name, char?.class?.name].filter(Boolean).join(' ')}
+                    {char?.level ? ` · Level ${char.level}` : ''}
+                  </Text>
+                  <Text style={styles.saveCampaign} numberOfLines={1}>
+                    {saveData.campaign?.title || 'Unknown Campaign'}
+                  </Text>
+                </View>
+              </View>
+              {saveData.sessionMessageCount > 0 && (
+                <Text style={styles.saveTurns}>{saveData.sessionMessageCount} turns played</Text>
+              )}
+            </View>
           )}
 
-          <TouchableOpacity
-            style={hasSave ? styles.btnSecondary : styles.btnPrimary}
-            onPress={handleNewGame}
-            activeOpacity={0.85}
-          >
-            <Text style={hasSave ? styles.btnSecondaryText : styles.btnPrimaryText}>
-              {hasSave ? 'New Game' : 'Begin Your Adventure'}
-            </Text>
-            {!hasSave && <Text style={styles.btnPrimaryArrow}>→</Text>}
-          </TouchableOpacity>
+          <View style={styles.buttons}>
+            {hasSave && (
+              <Animated.View style={{ opacity: pulseAnim, alignItems: 'center' }}>
+                <FlameButton label="Continue" onPress={handleContinue} />
+              </Animated.View>
+            )}
+
+            {hasSave ? (
+              <TouchableOpacity style={[styles.btnSecondary, { opacity: 0.5 }]} onPress={handleNewGame} activeOpacity={0.85}>
+                <Text style={styles.btnSecondaryText}>New Game</Text>
+              </TouchableOpacity>
+            ) : (
+              <Animated.View style={{ opacity: pulseAnim, alignItems: 'center' }}>
+                <FlameButton label="Begin" onPress={handleNewGame} />
+              </Animated.View>
+            )}
+          </View>
         </View>
 
         {/* ── Secondary options grid ── */}
@@ -312,15 +318,11 @@ const styles = StyleSheet.create({
   },
 
   content: {
-    flex: 1, paddingHorizontal: SPACING.lg, justifyContent: 'center', paddingBottom: SPACING.xl,
+    flex: 1, paddingHorizontal: SPACING.lg, justifyContent: 'space-between', paddingBottom: SPACING.lg,
   },
 
   // Title
-  titleSection: { alignItems: 'center', marginBottom: SPACING.xl },
-  eyebrow: {
-    fontFamily: FONTS.sansSerif, fontSize: FONT_SIZES.xs, color: COLORS.primary,
-    letterSpacing: 4, textTransform: 'uppercase', marginBottom: SPACING.sm, opacity: 0.8,
-  },
+  titleSection: { alignItems: 'center', paddingTop: SPACING.xl },
   title: {
     fontFamily: FONTS.serif, fontSize: 56, color: COLORS.textPrimary,
     fontWeight: '700', letterSpacing: 2, marginBottom: SPACING.md,
@@ -333,7 +335,7 @@ const styles = StyleSheet.create({
   // Save card
   saveCard: {
     backgroundColor: COLORS.surface, borderWidth: 1, borderColor: COLORS.border,
-    borderRadius: RADIUS.xl, padding: SPACING.md, marginBottom: SPACING.lg, ...SHADOWS.md,
+    borderRadius: RADIUS.xl, padding: SPACING.md, ...SHADOWS.md,
   },
   saveCardHeader: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', marginBottom: SPACING.sm },
   saveCardLabel: { fontFamily: FONTS.sansSerif, fontSize: FONT_SIZES.xs, color: COLORS.primary, letterSpacing: 2, fontWeight: '700' },
@@ -353,8 +355,11 @@ const styles = StyleSheet.create({
   saveCampaign: { fontFamily: FONTS.sansSerif, fontSize: FONT_SIZES.xs, color: COLORS.primary, fontStyle: 'italic', marginTop: 2, opacity: 0.9 },
   saveTurns: { fontFamily: FONTS.sansSerif, fontSize: FONT_SIZES.xs, color: COLORS.textMuted, marginTop: SPACING.sm, textAlign: 'right' },
 
+  // Middle section
+  middleSection: { gap: SPACING.md },
+
   // Buttons
-  buttons: { gap: SPACING.sm, marginBottom: SPACING.md },
+  buttons: { gap: SPACING.sm },
   btnPrimary: {
     flexDirection: 'row', alignItems: 'center', justifyContent: 'center',
     backgroundColor: COLORS.primary, borderRadius: RADIUS.lg,
@@ -371,12 +376,13 @@ const styles = StyleSheet.create({
 
   // Secondary options grid
   secondaryGrid: {
-    flexDirection: 'row', flexWrap: 'wrap', gap: SPACING.sm, marginBottom: SPACING.xl,
+    flexDirection: 'row', flexWrap: 'wrap', justifyContent: 'center',
+    gap: SPACING.sm, paddingTop: SPACING.xl,
   },
   secondaryTile: {
-    flex: 1, minWidth: '45%', alignItems: 'center', justifyContent: 'center',
-    backgroundColor: COLORS.surfaceElevated, borderWidth: 1, borderColor: COLORS.border,
-    borderRadius: RADIUS.lg, paddingVertical: SPACING.md, paddingHorizontal: SPACING.sm,
+    width: '47%', alignItems: 'center', justifyContent: 'center',
+    backgroundColor: COLORS.surfaceElevated + '80', borderWidth: 1, borderColor: COLORS.border + '80',
+    borderRadius: RADIUS.lg, paddingVertical: SPACING.sm, paddingHorizontal: SPACING.lg,
   },
   secondaryTileDanger: { borderColor: COLORS.danger + '55' },
   secondaryTileText: {

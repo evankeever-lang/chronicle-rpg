@@ -11,6 +11,39 @@ import {
 import { useGame } from '../context/GameContext';
 import { COLORS, FONTS, FONT_SIZES, SPACING, RADIUS } from '../constants/theme';
 
+const TEXT_SPEED_OPTIONS = [
+  { key: 'slower', label: 'Slower' },
+  { key: 'slow',   label: 'Slow' },
+  { key: 'normal', label: 'Normal' },
+  { key: 'fast',   label: 'Fast' },
+  { key: 'faster', label: 'Faster' },
+];
+
+function TextSpeedRow({ value, onChange }) {
+  return (
+    <View style={styles.textSpeedRow}>
+      <Text style={styles.volumeLabel}>Text Speed</Text>
+      <View style={styles.segmented}>
+        {TEXT_SPEED_OPTIONS.map(({ key, label }) => {
+          const active = value === key;
+          return (
+            <TouchableOpacity
+              key={key}
+              style={[styles.segment, active && styles.segmentActive]}
+              onPress={() => onChange(key)}
+              activeOpacity={0.7}
+            >
+              <Text style={[styles.segmentText, active && styles.segmentTextActive]}>
+                {label}
+              </Text>
+            </TouchableOpacity>
+          );
+        })}
+      </View>
+    </View>
+  );
+}
+
 function VolumeRow({ label, settingKey, value, onSet, onAdjust }) {
   const trackWidth = useRef(0);
   const onSetRef = useRef(onSet);
@@ -76,9 +109,9 @@ function VolumeRow({ label, settingKey, value, onSet, onAdjust }) {
   );
 }
 
-export default function SettingsModal({ visible, onClose }) {
+export default function SettingsModal({ visible, onClose, onExit }) {
   const { preferences, setPreferences } = useGame();
-  const { masterVolume = 80, musicVolume = 70, sfxVolume = 80 } = preferences || {};
+  const { masterVolume = 80, musicVolume = 70, sfxVolume = 80, textSpeed = 'normal' } = preferences || {};
 
   const set = (key, val) => setPreferences({ [key]: Math.min(100, Math.max(0, val)) });
   const adjust = (key, delta) => set(key, (preferences[key] ?? 80) + delta);
@@ -93,8 +126,10 @@ export default function SettingsModal({ visible, onClose }) {
         <ScrollView
           contentContainerStyle={styles.body}
           showsVerticalScrollIndicator={false}
-          scrollEnabled={false}
         >
+          <Text style={styles.sectionHeader}>Display</Text>
+          <TextSpeedRow value={textSpeed} onChange={(val) => setPreferences({ textSpeed: val })} />
+          <View style={styles.sectionDivider} />
           <Text style={styles.sectionHeader}>Audio</Text>
           <VolumeRow label="Master Volume" settingKey="masterVolume" value={masterVolume} onSet={set} onAdjust={adjust} />
           <VolumeRow label="Music Volume"  settingKey="musicVolume"  value={musicVolume}  onSet={set} onAdjust={adjust} />
@@ -103,6 +138,11 @@ export default function SettingsModal({ visible, onClose }) {
         <TouchableOpacity style={styles.doneBtn} onPress={onClose} activeOpacity={0.8}>
           <Text style={styles.doneBtnText}>Done</Text>
         </TouchableOpacity>
+        {onExit && (
+          <TouchableOpacity style={styles.exitBtn} onPress={onExit} activeOpacity={0.8}>
+            <Text style={styles.exitBtnText}>Return to Main Menu</Text>
+          </TouchableOpacity>
+        )}
       </View>
     </Modal>
   );
@@ -236,6 +276,41 @@ const styles = StyleSheet.create({
     elevation: 4,
   },
 
+  sectionDivider: {
+    height: 1,
+    backgroundColor: COLORS.border,
+    marginBottom: SPACING.md,
+  },
+  textSpeedRow: {
+    marginBottom: SPACING.lg,
+  },
+  segmented: {
+    flexDirection: 'row',
+    marginTop: SPACING.sm,
+    borderRadius: RADIUS.md,
+    borderWidth: 1,
+    borderColor: COLORS.border,
+    overflow: 'hidden',
+  },
+  segment: {
+    flex: 1,
+    paddingVertical: SPACING.sm,
+    alignItems: 'center',
+    backgroundColor: COLORS.surfaceElevated,
+  },
+  segmentActive: {
+    backgroundColor: COLORS.primary,
+  },
+  segmentText: {
+    fontFamily: FONTS.sansSerif,
+    fontSize: FONT_SIZES.xs,
+    color: COLORS.textMuted,
+  },
+  segmentTextActive: {
+    color: COLORS.surface,
+    fontWeight: '600',
+  },
+
   doneBtn: {
     marginHorizontal: SPACING.md,
     marginTop: SPACING.md,
@@ -251,5 +326,18 @@ const styles = StyleSheet.create({
     fontSize: FONT_SIZES.md,
     color: COLORS.textPrimary,
     fontWeight: '600',
+  },
+  exitBtn: {
+    marginHorizontal: SPACING.md,
+    marginTop: SPACING.sm,
+    paddingVertical: SPACING.md,
+    borderRadius: RADIUS.lg,
+    alignItems: 'center',
+  },
+  exitBtnText: {
+    fontFamily: FONTS.sansSerif,
+    fontSize: FONT_SIZES.sm,
+    color: COLORS.textMuted,
+    fontWeight: '500',
   },
 });

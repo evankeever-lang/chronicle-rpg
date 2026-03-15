@@ -30,7 +30,8 @@
     "sdkVersion": "55.0.0",
     "plugins": [
       "expo-asset",
-      "expo-audio"
+      "expo-audio",
+      "expo-font"
     ]
   }
 }

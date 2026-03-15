@@ -1,6 +1,7 @@
 import React, { createContext, useContext, useReducer, useEffect, useRef } from 'react';
 import { saveGame, savePreferences, loadPreferences } from '../utils/storage';
 import { generateRollingSummary } from '../utils/claude';
+import { XP_THRESHOLDS } from '../constants/classes';
 
 const initialState = {
   campaign: null,
@@ -9,6 +10,7 @@ const initialState = {
     name: '',
     race: null,
     class: null,
+    background: null,
     level: 1,
     abilityScores: { STR: 10, DEX: 10, CON: 10, INT: 10, WIS: 10, CHA: 10 },
     maxHP: 0,
@@ -16,13 +18,31 @@ const initialState = {
     AC: 10,
     speed: 30,
     proficiencyBonus: 2,
-    skills: [],
+    skills: {},
+    hitDie: 8,
+    spellcastingAbility: null,
+    halfCaster: false,
     inventory: [],
     gold: 0,
     conditions: [],
-    spellSlots: {},
+    spellSlots: { current: { 1: 0, 2: 0, 3: 0, 4: 0, 5: 0 }, max: { 1: 0, 2: 0, 3: 0, 4: 0, 5: 0 } },
+    knownSpells: [],
     portrait: null,
   },
+
+  // ── Equipment slots ───────────────────────────────────────────────────────────
+  equipment: {
+    head: null, chest: null, hands: null, feet: null,
+    mainHand: null, offHand: null, ring1: null, ring2: null, amulet: null,
+  },
+
+  // ── Progression ───────────────────────────────────────────────────────────────
+  xp: 0,
+  xpToNext: XP_THRESHOLDS[1], // 300
+  pendingLevelUp: false,
+
+  // ── Session notes ─────────────────────────────────────────────────────────────
+  sessionNotes: '',
   conversationHistory: [],
   uiMessages: [],
   sessionFlags: {},
@@ -67,7 +87,7 @@ const initialState = {
   campaignMemory: null,
 
   // ── User preferences ──────────────────────────────────────────────────────────
-  preferences: { diceSkin: 'default', masterVolume: 100, musicVolume: 90, sfxVolume: 80 },
+  preferences: { diceSkin: 'default', masterVolume: 100, musicVolume: 90, sfxVolume: 80, textSpeed: 'normal' },
 
   // ── Mechanic coverage — tracks which mechanics the player has encountered this session ──
   // 'skill_check' | 'combat' | 'inventory'
@@ -317,11 +337,103 @@ function gameReducer(state, action) {
     case 'SET_PREFERENCES':
       return { ...state, preferences: { ...state.preferences, ...action.payload } };
 
+    case 'SET_SESSION_NOTES':
+      return { ...state, sessionNotes: action.payload };
+
+    // ── Economy ──────────────────────────────────────────────────────────────────
+    case 'ADD_GOLD':
+      return { ...state, character: { ...state.character, gold: Math.max(0, (state.character.gold || 0) + action.payload) } };
+
+    // ── Inventory ────────────────────────────────────────────────────────────────
     case 'ADD_TO_INVENTORY':
       return {
         ...state,
         character: { ...state.character, inventory: [...state.character.inventory, action.payload] },
       };
+
+    case 'ADD_ITEM': {
+      const newItem = { id: `item_${Date.now()}_${Math.random().toString(36).slice(2, 6)}`, ...action.payload };
+      return { ...state, character: { ...state.character, inventory: [...state.character.inventory, newItem] } };
+    }
+
+    case 'REMOVE_ITEM':
+      return { ...state, character: { ...state.character, inventory: state.character.inventory.filter(i => i.id !== action.payload) } };
+
+    case 'EQUIP_ITEM':
+      return {
+        ...state,
+        equipment: { ...state.equipment, [action.payload.slot]: action.payload.itemId },
+        character: { ...state.character, inventory: state.character.inventory.map(i => i.id === action.payload.itemId ? { ...i, equipped: true } : i) },
+      };
+
+    case 'UNEQUIP_ITEM':
+      return {
+        ...state,
+        equipment: { ...state.equipment, [action.payload.slot]: null },
+        character: { ...state.character, inventory: state.character.inventory.map(i => i.id === action.payload.itemId ? { ...i, equipped: false } : i) },
+      };
+
+    // ── Progression ──────────────────────────────────────────────────────────────
+    case 'ADD_XP': {
+      const newXp = state.xp + action.payload;
+      const pendingLevelUp = newXp >= state.xpToNext;
+      return { ...state, xp: newXp, pendingLevelUp };
+    }
+
+    case 'LEVEL_UP': {
+      const { newLevel, hpIncrease, newSpellSlots, newXpToNext } = action.payload;
+      return {
+        ...state,
+        character: {
+          ...state.character,
+          level: newLevel,
+          maxHP: state.character.maxHP + hpIncrease,
+          currentHP: Math.min(state.character.currentHP + hpIncrease, state.character.maxHP + hpIncrease),
+          proficiencyBonus: Math.ceil(newLevel / 4) + 1, // 2 at L1-4, 3 at L5-8, 4 at L9-12
+          ...(newSpellSlots ? { spellSlots: newSpellSlots } : {}),
+        },
+        xpToNext: newXpToNext ?? state.xpToNext,
+        pendingLevelUp: false,
+      };
+    }
+
+    case 'UPDATE_ABILITY_SCORES':
+      return { ...state, character: { ...state.character, abilityScores: { ...state.character.abilityScores, ...action.payload } } };
+
+    case 'UPDATE_SKILLS':
+      return { ...state, character: { ...state.character, skills: { ...state.character.skills, ...action.payload } } };
+
+    // ── Spells ───────────────────────────────────────────────────────────────────
+    case 'USE_SPELL_SLOT': {
+      const level = action.payload;
+      const current = state.character.spellSlots?.current || {};
+      return {
+        ...state,
+        character: {
+          ...state.character,
+          spellSlots: {
+            ...state.character.spellSlots,
+            current: { ...current, [level]: Math.max(0, (current[level] || 0) - 1) },
+          },
+        },
+      };
+    }
+
+    case 'RESTORE_SPELL_SLOTS': {
+      if (action.payload !== 'long') return state; // short rest doesn't restore slots (no Warlock)
+      const maxSlots = state.character.spellSlots?.max || { 1: 0, 2: 0, 3: 0, 4: 0, 5: 0 };
+      return {
+        ...state,
+        character: {
+          ...state.character,
+          spellSlots: { ...state.character.spellSlots, current: { ...maxSlots } },
+        },
+      };
+    }
+
+    case 'RESTORE_HP_FULL':
+      return { ...state, character: { ...state.character, currentHP: state.character.maxHP } };
+
     case 'SET_SESSION_SUMMARY':
       return {
         ...state,
@@ -414,8 +526,29 @@ export function GameProvider({ children }) {
 
   const setDiceSkin = (skin) => dispatch({ type: 'SET_DICE_SKIN', payload: skin });
   const setPreferences = (updates) => dispatch({ type: 'SET_PREFERENCES', payload: updates });
+  const setSessionNotes = (notes) => dispatch({ type: 'SET_SESSION_NOTES', payload: notes });
   const endSession = () => dispatch({ type: 'END_SESSION' });
   const resetGame = () => dispatch({ type: 'RESET_GAME' });
+
+  // ── Economy ───────────────────────────────────────────────────────────────────
+  const addGold = (amount) => dispatch({ type: 'ADD_GOLD', payload: amount });
+
+  // ── Inventory ─────────────────────────────────────────────────────────────────
+  const addItem = (item) => dispatch({ type: 'ADD_ITEM', payload: item });
+  const removeItem = (itemId) => dispatch({ type: 'REMOVE_ITEM', payload: itemId });
+  const equipItem = (itemId, slot) => dispatch({ type: 'EQUIP_ITEM', payload: { itemId, slot } });
+  const unequipItem = (itemId, slot) => dispatch({ type: 'UNEQUIP_ITEM', payload: { itemId, slot } });
+
+  // ── Progression ───────────────────────────────────────────────────────────────
+  const addXP = (amount) => dispatch({ type: 'ADD_XP', payload: amount });
+  const levelUp = (payload) => dispatch({ type: 'LEVEL_UP', payload });
+  const updateAbilityScores = (updates) => dispatch({ type: 'UPDATE_ABILITY_SCORES', payload: updates });
+  const updateSkills = (updates) => dispatch({ type: 'UPDATE_SKILLS', payload: updates });
+
+  // ── Spells ────────────────────────────────────────────────────────────────────
+  const useSpellSlot = (level) => dispatch({ type: 'USE_SPELL_SLOT', payload: level });
+  const restoreSpellSlots = (restType) => dispatch({ type: 'RESTORE_SPELL_SLOTS', payload: restType });
+  const restoreHPFull = () => dispatch({ type: 'RESTORE_HP_FULL' });
 
   /** Flush state to disk immediately (bypasses the debounce). Use before reset/exit. */
   const saveNow = () => saveGame(state);
@@ -493,6 +626,23 @@ export function GameProvider({ children }) {
         // Preferences
         setDiceSkin,
         setPreferences,
+        setSessionNotes,
+        // Economy
+        addGold,
+        // Inventory
+        addItem,
+        removeItem,
+        equipItem,
+        unequipItem,
+        // Progression
+        addXP,
+        levelUp,
+        updateAbilityScores,
+        updateSkills,
+        // Spells
+        useSpellSlot,
+        restoreSpellSlots,
+        restoreHPFull,
       }}
     >
       {children}

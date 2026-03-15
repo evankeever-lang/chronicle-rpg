@@ -2,7 +2,7 @@
 import React, { useState, useRef, useCallback, useEffect } from 'react';
 import {
   View, Text, StyleSheet, ScrollView, TextInput, TouchableOpacity,
-  KeyboardAvoidingView, Platform, Modal, StatusBar, Animated, Keyboard, Alert,
+  KeyboardAvoidingView, Platform, Modal, StatusBar, Animated, Keyboard, Alert, Image,
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { LinearGradient } from 'expo-linear-gradient';
@@ -14,11 +14,16 @@ import DiceRoller from '../components/DiceRoller';
 import ChronicleCard from '../components/ChronicleCard';
 import CombatHUD, { EnemyZone, CombatLogStrip } from '../components/CombatHUD';
 import SettingsModal from '../components/SettingsModal';
+import LootFoundCard from '../components/LootFoundCard';
+import CharacterSheetOverlay from '../components/CharacterSheetOverlay';
+import LevelUpModal from '../components/LevelUpModal';
+import InventorySheet from '../components/InventorySheet';
 import {
   rollInitiative, initializeEnemies, resolveAttack, rollDamage,
   rollDeathSave, buildCombatSummary, formatPlayerAttack, formatEnemyTurn, getPlayerCombatProfile,
 } from '../utils/combat';
 import { getAbilityModifier, roll } from '../utils/dice';
+import { SKILL_TO_STAT, SKILL_DISPLAY_NAMES } from '../constants/backgrounds';
 import { COLORS, FONTS, FONT_SIZES, SPACING, RADIUS } from '../constants/theme';
 import { stopMenuMusic } from '../utils/menuMusic';
 import GameplayMusicManager from '../components/GameplayMusicManager';
@@ -89,11 +94,17 @@ export default function DMConversationScreen({ navigation }) {
     markMechanicSeen,
     // Preferences
     preferences,
+    // Progression
+    xp = 0,
+    xpToNext = 300,
+    pendingLevelUp = false,
   } = game;
 
   const [isLoading, setLoading] = useState(false);
   const [historyVisible, setHistoryVisible] = useState(false);
   const [charSheetVisible, setCharSheetVisible] = useState(false);
+  const [levelUpVisible, setLevelUpVisible] = useState(false);
+  const [inventoryVisible, setInventoryVisible] = useState(false);
 
   // ── Stop menu music when session starts ───────────────────────────────────────
   useEffect(() => { stopMenuMusic({ fade: true }); }, []);
@@ -154,11 +165,27 @@ export default function DMConversationScreen({ navigation }) {
       const isFirstCombat = !seenMechanics.has('combat');
       updateHP(isFirstCombat ? Math.max(1, newHP) : newHP);
     }
-    if (updates.gold_change && character?.gold != null) {
-      setCharacter({ gold: character.gold + updates.gold_change });
+    if (updates.gold_change && updates.gold_change !== 0) {
+      game.addGold(updates.gold_change);
     }
     if (updates.add_items?.length) {
-      updates.add_items.forEach(item => addToInventory(item));
+      updates.add_items.forEach((item) => {
+        // items may be strings (legacy) or objects
+        if (typeof item === 'string') {
+          game.addItem({ name: item, type: 'misc', weight: 1, equipped: false, quantity: 1, description: '' });
+        } else {
+          game.addItem(item);
+        }
+      });
+    }
+    if (updates.xp_award > 0) {
+      game.addXP(updates.xp_award);
+    }
+    if (updates.rest_type) {
+      game.restoreSpellSlots(updates.rest_type);
+      if (updates.rest_type === 'long') {
+        game.restoreHPFull();
+      }
     }
     if (updates.conditions_applied?.length) {
       setCharacter({ conditions: [...new Set([...(character?.conditions || []), ...updates.conditions_applied])] });
@@ -516,6 +543,7 @@ export default function DMConversationScreen({ navigation }) {
   const [isGeneratingSummary, setIsGeneratingSummary] = useState(false);
   const [lootCard, setLootCard] = useState(null);
   const [combatPanelMode, setCombatPanelMode] = useState(null); // null | 'attack'
+  const [latestMessageId, setLatestMessageId] = useState(null);
   const [customCombatText, setCustomCombatText] = useState('');
   const [pendingCombatRoll, setPendingCombatRoll] = useState(null); // null | { type: 'initiative', enemies } | { type: 'attack', targetEnemy }
   const [waitingForInitiative, setWaitingForInitiative] = useState(false);
@@ -531,6 +559,7 @@ export default function DMConversationScreen({ navigation }) {
   const firstCombatDirective = useRef(null);
 
   const scrollRef = useRef(null);
+  const storyScrollRef = useRef(null);
   const typingAnim = useRef(new Animated.Value(0)).current;
   const combatPanelAnim = useRef(new Animated.Value(60)).current;
 
@@ -608,11 +637,13 @@ export default function DMConversationScreen({ navigation }) {
         sessionFlags, worldRegistry, campaignMemory,
       });
 
+      const openingDmId = `dm_${Date.now()}`;
       addMessage({
-        id: `dm_${Date.now()}`, role: 'assistant', content: dmResponse,
+        id: openingDmId, role: 'assistant', content: dmResponse,
         personaName: selectedPersona?.name || 'The Chronicler',
         personaEmoji: selectedPersona?.emoji || '📜', timestamp: Date.now(),
       });
+      setLatestMessageId(openingDmId);
       if (dmResponse.state_updates) applyStateUpdates(dmResponse.state_updates);
       if (dmResponse.tone) setTone(dmResponse.tone);
       if (dmResponse.scene_tag) setSceneTag(dmResponse.scene_tag);
@@ -675,11 +706,13 @@ export default function DMConversationScreen({ navigation }) {
         worldRegistry, campaignMemory,
       });
 
+      const dmMsgId = `dm_${Date.now()}`;
       addMessage({
-        id: `dm_${Date.now()}`, role: 'assistant', content: dmResponse,
+        id: dmMsgId, role: 'assistant', content: dmResponse,
         personaName: selectedPersona?.name || 'The Chronicler',
         personaEmoji: selectedPersona?.emoji || '📜', timestamp: Date.now(),
       });
+      setLatestMessageId(dmMsgId);
 
       if (dmResponse.state_updates) {
         applyStateUpdates(dmResponse.state_updates);
@@ -771,7 +804,28 @@ export default function DMConversationScreen({ navigation }) {
     sendMessage(rollText);
   }, [pendingRoll, pendingCombatRoll, sendMessage, handleInitiativeRoll, handleAttackPhase1, handleAttackPhase2]);
 
-  const handleQuickAction = (action) => sendMessage(action);
+  // action is now { text, skill, dc } — trigger DiceRoller for skill actions, else plain send
+  const handleQuickAction = (action) => {
+    const text = typeof action === 'string' ? action : action.text;
+    const skill = typeof action === 'object' ? action.skill : null;
+    const dc = typeof action === 'object' ? action.dc : null;
+
+    if (skill && combatState === 'EXPLORATION') {
+      // Compute the modifier for this skill
+      const statKey = SKILL_TO_STAT[skill.toLowerCase().replace(/\s/g, '')];
+      const statScore = character?.abilityScores?.[statKey] ?? 10;
+      const statMod = getAbilityModifier(statScore);
+      const profLevel = character?.skills?.[skill.toLowerCase().replace(/\s/g, '')] || 0;
+      const profBonus = character?.proficiencyBonus ?? 2;
+      const skillMod = profLevel === 2 ? statMod + profBonus * 2 : profLevel === 1 ? statMod + profBonus : statMod;
+      const skillDisplayName = SKILL_DISPLAY_NAMES[skill.toLowerCase().replace(/[\s]/g, '')] || skill;
+      setPendingRoll({ skill: skillDisplayName, dc: dc ?? null, modifier: skillMod });
+      setDiceVisible(true);
+      markMechanicSeen('skill_check');
+    } else {
+      sendMessage(text);
+    }
+  };
 
   const lastDMMessage = [...(messages || [])].reverse().find(m => m.role === 'assistant');
   const lastPlayerMessage = [...(messages || [])].reverse().find(m => m.role === 'user' && m.displayText)?.displayText || null;
@@ -815,29 +869,57 @@ export default function DMConversationScreen({ navigation }) {
 
       {/* ── HUD ── */}
       <View style={styles.hud}>
-        <View style={styles.hudLeft}>
-          <TouchableOpacity style={styles.hudExitBtn} onPress={handleSaveAndExit} hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}>
-            <Text style={styles.hudExitText}>←</Text>
-          </TouchableOpacity>
-          <TouchableOpacity style={styles.hudPortrait} onPress={() => setCharSheetVisible(true)}>
-            <Text style={styles.hudPortraitEmoji}>{character?.race?.emoji || '⚔️'}</Text>
-          </TouchableOpacity>
-          <View style={{ flex: 1 }}>
+        {/* Portrait panel */}
+        <TouchableOpacity style={styles.hudPortrait} onPress={() => setCharSheetVisible(true)} activeOpacity={0.8}>
+          <Image source={require('../assets/ui/octagonal_medallion.png')} style={styles.hudPortraitFrame} resizeMode="contain" />
+        </TouchableOpacity>
+
+        {/* Character info block */}
+        <View style={styles.hudCharInfo}>
+          <View style={styles.hudNameRow}>
             <Text style={styles.hudName} numberOfLines={1}>{character?.name}</Text>
-            <Text style={styles.hudSub} numberOfLines={1}>{character?.race?.name} {character?.class?.name} · Lv {character?.level}</Text>
+            <Text style={styles.hudLevelBadge}>Lv {character?.level}</Text>
+            <Text style={styles.hudAc}>AC {character?.AC}</Text>
+          </View>
+          <Text style={styles.hudSub} numberOfLines={1}>{character?.race?.name} {character?.class?.name}</Text>
+          <View style={styles.hudStatsRow}>
+            <View style={styles.hpBarBg}>
+              <View style={[styles.hpBarFill, { width: `${hpPct * 100}%` }]} />
+            </View>
+            <Text style={styles.hudHpCurrent}>{character?.currentHP}</Text>
+            <Text style={styles.hudHpMax}>/{character?.maxHP}</Text>
           </View>
         </View>
-        <View style={styles.hudRight}>
-          <TouchableOpacity style={styles.hudSettingsBtn} onPress={() => setSettingsVisible(true)} hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}>
-            <Text style={styles.hudSettingsText}>⚙</Text>
+
+        {/* Icon cluster */}
+        <View style={styles.hudIconCluster}>
+          <TouchableOpacity style={styles.hudIconBtn} onPress={() => setInventoryVisible(true)} hitSlop={{ top: 6, bottom: 6, left: 6, right: 6 }}>
+            <Image source={require('../assets/ui/inventory_button.png')} style={styles.hudIconImg} resizeMode="contain" />
           </TouchableOpacity>
-          <Text style={[styles.hudHp, { color: hpColor }]}>{character?.currentHP}/{character?.maxHP} HP</Text>
-          <View style={styles.hpBarBg}>
-            <View style={[styles.hpBarFill, { width: `${hpPct * 100}%`, backgroundColor: hpColor }]} />
-          </View>
-          <Text style={styles.hudAc}>AC {character?.AC}</Text>
+          <TouchableOpacity style={styles.hudIconBtn} onPress={() => setHistoryVisible(true)} hitSlop={{ top: 6, bottom: 6, left: 6, right: 6 }}>
+            <Image source={require('../assets/ui/history_button.png')} style={styles.hudIconImg} resizeMode="contain" />
+          </TouchableOpacity>
+          <TouchableOpacity style={styles.hudIconBtn} onPress={() => setSettingsVisible(true)} hitSlop={{ top: 6, bottom: 6, left: 6, right: 6 }}>
+            <Image source={require('../assets/ui/settings_button.png')} style={styles.hudIconImg} resizeMode="contain" />
+          </TouchableOpacity>
         </View>
       </View>
+
+      {/* ── XP bar ── */}
+      <TouchableOpacity
+        style={styles.xpBar}
+        onPress={pendingLevelUp ? () => setLevelUpVisible(true) : () => setCharSheetVisible(true)}
+        hitSlop={{ top: 4, bottom: 4, left: 0, right: 0 }}
+      >
+        <View style={styles.xpBarBg}>
+          <View style={[styles.xpBarFill, { width: `${Math.min(1, xp / xpToNext) * 100}%` }]} />
+        </View>
+        {pendingLevelUp && (
+          <View style={styles.xpLevelUpBadge}>
+            <Text style={styles.xpLevelUpText}>⬆ LEVEL UP</Text>
+          </View>
+        )}
+      </TouchableOpacity>
 
       {/* ── Combat HUD ── */}
       <CombatHUD
@@ -876,22 +958,14 @@ export default function DMConversationScreen({ navigation }) {
           <>
             {/* Current DM response — scrollable if long */}
             <ScrollView
+              ref={storyScrollRef}
               style={styles.storyArea}
               contentContainerStyle={styles.storyContent}
               showsVerticalScrollIndicator={false}
               keyboardDismissMode="interactive"
+              onContentSizeChange={() => storyScrollRef.current?.scrollToEnd({ animated: true })}
             >
-              {/* Campaign bar */}
-              <View style={styles.campaignBar}>
-                <Text style={styles.campaignBarTitle}>
-                  {selectedCampaign?.emoji}  {selectedCampaign?.title}
-                </Text>
-                <TouchableOpacity onPress={() => setHistoryVisible(true)} style={styles.historyBtn}>
-                  <Text style={styles.historyBtnText}>History</Text>
-                </TouchableOpacity>
-              </View>
-
-              {/* Player's last visible action — hidden when combat end banner is showing */}
+{/* Player's last visible action — hidden when combat end banner is showing */}
               {lastPlayerMessage && !combatEndBanner && (
                 <View style={styles.playerEcho}>
                   <Text style={styles.playerEchoLabel}>You</Text>
@@ -914,7 +988,10 @@ export default function DMConversationScreen({ navigation }) {
                   {combatEndBanner && (
                     <DMMessage message={{ id: 'combat_end_banner', role: 'assistant', content: { system_text: combatEndBanner } }} />
                   )}
-                  <DMMessage message={lastDMMessage} />
+                  <DMMessage
+                    message={lastDMMessage}
+                    isNew={lastDMMessage.id === latestMessageId}
+                  />
                 </>
               ) : null}
 
@@ -928,11 +1005,23 @@ export default function DMConversationScreen({ navigation }) {
             {/* ── Suggested actions (hidden during COMBAT_STATE) ── */}
             {suggestedActions.length > 0 && !isLoading && !isAtLimit && !diceVisible && (
               <View style={styles.actionsContainer}>
-                {suggestedActions.map((action, i) => (
-                  <TouchableOpacity key={i} style={styles.actionChip} onPress={() => handleQuickAction(action)}>
-                    <Text style={styles.actionChipText}>{action}</Text>
-                  </TouchableOpacity>
-                ))}
+                {suggestedActions.map((action, i) => {
+                  const actionText = typeof action === 'string' ? action : action.text;
+                  const actionSkill = typeof action === 'object' ? action.skill : null;
+                  const actionDC = typeof action === 'object' ? action.dc : null;
+                  return (
+                    <TouchableOpacity key={i} style={styles.actionChip} onPress={() => handleQuickAction(action)}>
+                      <Text style={styles.actionChipText}>{actionText}</Text>
+                      {actionSkill && (
+                        <View style={styles.actionChipBadge}>
+                          <Text style={styles.actionChipBadgeText}>
+                            {actionDC ? `${actionSkill} ${actionDC}` : actionSkill}
+                          </Text>
+                        </View>
+                      )}
+                    </TouchableOpacity>
+                  );
+                })}
               </View>
             )}
           </>
@@ -1166,104 +1255,12 @@ export default function DMConversationScreen({ navigation }) {
       )}
 
       {/* ── Loot card ── */}
-      {lootCard && (
-        <Modal transparent animationType="fade" visible={!!lootCard} onRequestClose={() => setLootCard(null)}>
-          <TouchableOpacity style={styles.lootOverlay} onPress={() => setLootCard(null)} activeOpacity={1}>
-            <View style={styles.lootCard}>
-              <Text style={styles.lootTitle}>⚔ Loot Found</Text>
-              {lootCard.items?.map((item, i) => (
-                <Text key={i} style={styles.lootItem}>• {item}</Text>
-              ))}
-              {lootCard.gold > 0 && <Text style={styles.lootGold}>+ {lootCard.gold} gold pieces</Text>}
-              <Text style={styles.lootDismiss}>Tap to continue</Text>
-            </View>
-          </TouchableOpacity>
-        </Modal>
-      )}
+      <LootFoundCard loot={lootCard} onDismiss={() => setLootCard(null)} />
 
       {/* ── Character Sheet ── */}
-      <Modal visible={charSheetVisible} animationType="slide" transparent onRequestClose={() => setCharSheetVisible(false)}>
-        <View style={styles.sheetBackdrop}>
-          <View style={styles.charSheet}>
-            <View style={styles.sheetHandle} />
-            <View style={styles.sheetHeaderRow}>
-              <View style={{ flex: 1 }}>
-                <Text style={styles.sheetName}>{character?.name}</Text>
-                <Text style={styles.sheetMeta}>{character?.race?.name} {character?.class?.name} · Level {character?.level}</Text>
-              </View>
-              <TouchableOpacity onPress={() => setCharSheetVisible(false)} style={styles.sheetDoneBtn}>
-                <Text style={styles.sheetDoneText}>Done</Text>
-              </TouchableOpacity>
-            </View>
-            <ScrollView showsVerticalScrollIndicator={false} contentContainerStyle={styles.sheetScroll}>
-              {/* Vitals */}
-              <View style={styles.sheetVitals}>
-                {[
-                  { label: 'HP', value: `${character?.currentHP}/${character?.maxHP}`, color: hpColor },
-                  { label: 'AC', value: character?.AC, color: COLORS.textSystem },
-                  { label: 'Speed', value: `${character?.speed}ft`, color: COLORS.textSecondary },
-                  { label: 'Prof', value: `+${character?.proficiencyBonus}`, color: COLORS.primary },
-                ].map(({ label, value, color }) => (
-                  <View key={label} style={styles.vitalCell}>
-                    <Text style={[styles.vitalValue, { color }]}>{value}</Text>
-                    <Text style={styles.vitalLabel}>{label}</Text>
-                  </View>
-                ))}
-              </View>
-              {/* Ability scores */}
-              <Text style={styles.sheetSection}>Ability Scores</Text>
-              <View style={styles.abilityGrid}>
-                {['STR', 'DEX', 'CON', 'INT', 'WIS', 'CHA'].map(key => {
-                  const score = character?.abilityScores?.[key] || 10;
-                  const mod = Math.floor((score - 10) / 2);
-                  const modStr = mod >= 0 ? `+${mod}` : `${mod}`;
-                  return (
-                    <View key={key} style={styles.abilityCell}>
-                      <Text style={[styles.abilityCellMod, { color: mod >= 0 ? COLORS.success : COLORS.hpLow }]}>{modStr}</Text>
-                      <Text style={styles.abilityCellScore}>{score}</Text>
-                      <Text style={styles.abilityCellKey}>{key}</Text>
-                    </View>
-                  );
-                })}
-              </View>
-              {/* Proficient skills */}
-              {character?.proficientSkills?.length > 0 && (
-                <>
-                  <Text style={styles.sheetSection}>Proficiencies</Text>
-                  <View style={styles.skillsWrap}>
-                    {character.proficientSkills.map((s, i) => (
-                      <View key={i} style={styles.skillTag}>
-                        <Text style={styles.skillTagText}>{s}</Text>
-                      </View>
-                    ))}
-                  </View>
-                </>
-              )}
-              {/* Equipment */}
-              {character?.inventory?.length > 0 && (
-                <>
-                  <Text style={styles.sheetSection}>Equipment</Text>
-                  {character.inventory.map((item, i) => (
-                    <Text key={i} style={styles.sheetListItem}>• {item}</Text>
-                  ))}
-                </>
-              )}
-              {character?.gold > 0 && (
-                <Text style={styles.sheetGold}>{character.gold} gold pieces</Text>
-              )}
-              {/* Conditions */}
-              {character?.conditions?.length > 0 && (
-                <>
-                  <Text style={styles.sheetSection}>Conditions</Text>
-                  {character.conditions.map((c, i) => (
-                    <Text key={i} style={[styles.sheetListItem, { color: COLORS.danger }]}>⚠ {c}</Text>
-                  ))}
-                </>
-              )}
-            </ScrollView>
-          </View>
-        </View>
-      </Modal>
+      <CharacterSheetOverlay visible={charSheetVisible} onClose={() => setCharSheetVisible(false)} />
+      <LevelUpModal visible={levelUpVisible} onClose={() => setLevelUpVisible(false)} />
+      <InventorySheet visible={inventoryVisible} onClose={() => setInventoryVisible(false)} />
 
       {/* ── Chronicle Card ── */}
       {chronicleVisible && (
@@ -1280,7 +1277,7 @@ export default function DMConversationScreen({ navigation }) {
         </Modal>
       )}
 
-      <SettingsModal visible={settingsVisible} onClose={() => setSettingsVisible(false)} />
+      <SettingsModal visible={settingsVisible} onClose={() => setSettingsVisible(false)} onExit={() => { setSettingsVisible(false); handleSaveAndExit(); }} />
     </SafeAreaView>
   );
 }
@@ -1288,21 +1285,28 @@ export default function DMConversationScreen({ navigation }) {
 const styles = StyleSheet.create({
   container: { flex: 1, backgroundColor: COLORS.background },
 
-  hud: { flexDirection: 'row', alignItems: 'center', paddingHorizontal: SPACING.md, paddingVertical: SPACING.sm, borderBottomWidth: 1, borderBottomColor: COLORS.border, gap: SPACING.sm, backgroundColor: COLORS.surface + 'CC' },
-  hudLeft: { flex: 1, flexDirection: 'row', alignItems: 'center', gap: SPACING.sm },
-  hudExitBtn: { paddingRight: 2 },
-  hudExitText: { color: COLORS.textMuted, fontSize: 20, lineHeight: 24 },
-  hudPortrait: { width: 36, height: 36, borderRadius: RADIUS.sm, backgroundColor: COLORS.surfaceElevated, alignItems: 'center', justifyContent: 'center', borderWidth: 1, borderColor: COLORS.primaryDark },
-  hudPortraitEmoji: { fontSize: 18 },
-  hudName: { color: COLORS.textPrimary, fontSize: 13, fontWeight: '700' },
-  hudSub: { color: COLORS.textMuted, fontSize: 10 },
-  hudRight: { alignItems: 'flex-end' },
-  hudSettingsBtn: { alignSelf: 'flex-end', marginBottom: 2 },
-  hudSettingsText: { fontSize: 14, color: COLORS.textMuted },
-  hudHp: { fontSize: 12, fontWeight: '700' },
-  hpBarBg: { width: 80, height: 4, backgroundColor: COLORS.border, borderRadius: 2, marginTop: 2, marginBottom: 2, overflow: 'hidden' },
-  hpBarFill: { height: '100%', borderRadius: 2 },
-  hudAc: { color: COLORS.textMuted, fontSize: 10 },
+  hud: { flexDirection: 'row', alignItems: 'stretch', backgroundColor: '#0d0c06', borderBottomWidth: 1, borderBottomColor: '#222215' },
+  hudPortrait: { width: 52, height: 64, overflow: 'hidden', backgroundColor: '#1a1710' },
+  hudPortraitFrame: { position: 'absolute', top: 0, left: 0, width: 52, height: 64 },
+  hudCharInfo: { flex: 1, flexDirection: 'column', justifyContent: 'center', paddingTop: 10, paddingBottom: 10, paddingLeft: 12, paddingRight: 10 },
+  hudNameRow: { flexDirection: 'row', alignItems: 'center', gap: 6, marginBottom: 1 },
+  hudName: { color: '#ede8d4', fontSize: 15, fontWeight: '600', flexShrink: 1 },
+  hudLevelBadge: { color: '#c8a84b', fontSize: 10, fontWeight: '600' },
+  hudAc: { fontSize: 10, color: '#b8a87a', marginLeft: 4 },
+  hudSub: { color: '#5e5a48', fontSize: 11, marginBottom: 3 },
+  hudStatsRow: { flexDirection: 'row', alignItems: 'center', gap: 4 },
+  hpBarBg: { width: 72, height: 3, backgroundColor: '#152115', borderRadius: 2, overflow: 'hidden' },
+  hpBarFill: { height: '100%', backgroundColor: '#4ecb71', borderRadius: 2 },
+  hudHpCurrent: { fontSize: 11, color: '#4ecb71', fontWeight: '600' },
+  hudHpMax: { fontSize: 11, color: '#2d7a45' },
+  hudIconCluster: { flexDirection: 'row', alignItems: 'center', gap: 6, paddingRight: 10 },
+  hudIconBtn: { width: 48, height: 48, alignItems: 'center', justifyContent: 'center' },
+  hudIconImg: { width: 48, height: 48 },
+  xpBar: { flexDirection: 'row', alignItems: 'center', paddingHorizontal: SPACING.md, paddingBottom: 3, gap: SPACING.xs },
+  xpBarBg: { flex: 1, height: 2, backgroundColor: COLORS.border, borderRadius: 1, overflow: 'hidden' },
+  xpBarFill: { height: '100%', backgroundColor: '#C9A84C', borderRadius: 1 },
+  xpLevelUpBadge: { backgroundColor: '#1A140A', borderWidth: 1, borderColor: '#C9A84C', borderRadius: RADIUS.pill, paddingHorizontal: 6, paddingVertical: 1 },
+  xpLevelUpText: { fontFamily: FONTS.sansSerif, fontSize: 9, color: '#C9A84C', fontWeight: '700', letterSpacing: 0.5 },
 
   warnBar: { backgroundColor: COLORS.warning + '33', paddingVertical: 6, paddingHorizontal: SPACING.md, borderBottomWidth: 1, borderBottomColor: COLORS.warning + '55' },
   warnText: { color: COLORS.warning, fontSize: 12, textAlign: 'center' },
@@ -1330,8 +1334,10 @@ const styles = StyleSheet.create({
 
   // ── Suggested actions ───────────────────────────────────────────────────────
   actionsContainer: { borderTopWidth: 1, borderTopColor: COLORS.border, paddingVertical: SPACING.xs, paddingHorizontal: SPACING.md, gap: 6 },
-  actionChip: { backgroundColor: COLORS.surfaceElevated, borderRadius: RADIUS.sm, paddingHorizontal: SPACING.md, paddingVertical: 10, borderWidth: 1, borderColor: COLORS.border },
-  actionChipText: { color: COLORS.textSecondary, fontSize: 13, lineHeight: 20, fontWeight: '400' },
+  actionChip: { backgroundColor: COLORS.surfaceElevated, borderRadius: RADIUS.sm, paddingHorizontal: SPACING.md, paddingVertical: 10, borderWidth: 1, borderColor: COLORS.border, flexDirection: 'row', alignItems: 'center', gap: 6 },
+  actionChipText: { color: COLORS.textSecondary, fontSize: 13, lineHeight: 20, fontWeight: '400', flex: 1 },
+  actionChipBadge: { backgroundColor: '#D4860B', borderRadius: RADIUS.pill, paddingHorizontal: 6, paddingVertical: 2 },
+  actionChipBadgeText: { color: '#1A0E00', fontSize: 10, fontWeight: '800' },
 
   // ── Death save bar ───────────────────────────────────────────────────────────
   deathSaveBar: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', padding: SPACING.sm, paddingHorizontal: SPACING.md, borderTopWidth: 1, borderTopColor: COLORS.danger + '88', backgroundColor: COLORS.surface + 'EE', gap: SPACING.sm },
@@ -1360,32 +1366,6 @@ const styles = StyleSheet.create({
   historyClose: { paddingVertical: SPACING.xs, paddingHorizontal: SPACING.sm },
   historyCloseText: { fontSize: 14, color: COLORS.primary, fontWeight: '700' },
   historyScroll: { padding: SPACING.md, paddingBottom: SPACING.xl },
-
-  // ── Character Sheet ──────────────────────────────────────────────────────────
-  sheetBackdrop: { flex: 1, justifyContent: 'flex-end', backgroundColor: 'rgba(0,0,0,0.6)' },
-  charSheet: { backgroundColor: COLORS.surface, borderTopLeftRadius: RADIUS.xxl, borderTopRightRadius: RADIUS.xxl, borderTopWidth: 1, borderColor: COLORS.border, maxHeight: '90%' },
-  sheetHandle: { width: 36, height: 4, borderRadius: 2, backgroundColor: COLORS.border, alignSelf: 'center', marginTop: SPACING.sm, marginBottom: SPACING.xs },
-  sheetHeaderRow: { flexDirection: 'row', alignItems: 'center', paddingHorizontal: SPACING.lg, paddingVertical: SPACING.sm, borderBottomWidth: 1, borderBottomColor: COLORS.border },
-  sheetName: { fontFamily: 'Georgia', fontSize: FONT_SIZES.xl, color: COLORS.textPrimary, fontWeight: '700' },
-  sheetMeta: { fontFamily: 'System', fontSize: FONT_SIZES.xs, color: COLORS.textSecondary, marginTop: 2 },
-  sheetDoneBtn: { paddingVertical: SPACING.xs, paddingHorizontal: SPACING.sm },
-  sheetDoneText: { fontSize: 14, color: COLORS.primary, fontWeight: '700' },
-  sheetScroll: { padding: SPACING.lg, paddingBottom: SPACING.xxl },
-  sheetVitals: { flexDirection: 'row', justifyContent: 'space-around', backgroundColor: COLORS.surfaceElevated, borderRadius: RADIUS.lg, padding: SPACING.md, marginBottom: SPACING.lg, borderWidth: 1, borderColor: COLORS.border },
-  vitalCell: { alignItems: 'center' },
-  vitalValue: { fontSize: 20, fontWeight: '800', fontFamily: 'Georgia' },
-  vitalLabel: { fontSize: 10, color: COLORS.textMuted, textTransform: 'uppercase', letterSpacing: 0.5, marginTop: 2 },
-  sheetSection: { fontSize: FONT_SIZES.xs, color: COLORS.textMuted, textTransform: 'uppercase', letterSpacing: 1, fontWeight: '700', marginBottom: SPACING.sm, marginTop: SPACING.md },
-  abilityGrid: { flexDirection: 'row', justifyContent: 'space-between', marginBottom: SPACING.sm },
-  abilityCell: { alignItems: 'center', backgroundColor: COLORS.surfaceElevated, borderRadius: RADIUS.md, paddingVertical: SPACING.sm, paddingHorizontal: 4, flex: 1, marginHorizontal: 2, borderWidth: 1, borderColor: COLORS.border },
-  abilityCellMod: { fontSize: 18, fontWeight: '900', fontFamily: 'Georgia' },
-  abilityCellScore: { fontSize: 11, color: COLORS.textSecondary, marginTop: 1 },
-  abilityCellKey: { fontSize: 9, color: COLORS.textMuted, textTransform: 'uppercase', letterSpacing: 0.3, marginTop: 1 },
-  skillsWrap: { flexDirection: 'row', flexWrap: 'wrap', gap: SPACING.xs, marginBottom: SPACING.sm },
-  skillTag: { backgroundColor: COLORS.primaryFaint, borderWidth: 1, borderColor: COLORS.primaryDark, borderRadius: RADIUS.pill, paddingHorizontal: SPACING.sm, paddingVertical: 3 },
-  skillTagText: { fontSize: FONT_SIZES.xs, color: COLORS.primary, fontWeight: '600' },
-  sheetListItem: { fontSize: FONT_SIZES.sm, color: COLORS.textSecondary, marginBottom: 4 },
-  sheetGold: { fontSize: FONT_SIZES.sm, color: COLORS.primary, fontStyle: 'italic', marginTop: SPACING.xs, marginBottom: SPACING.sm },
 
   // ── Combat Action Panel ─────────────────────────────────────────────────────
   combatPanel: {

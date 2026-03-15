@@ -225,7 +225,8 @@ function Die3D({ sides, rolling, skin = 'default', result = null, onReady }) {
     // Number inlay meshes (_1) keep the GLB's original material so numbers stay visible.
     if (mesh) {
       let bodyMat = null;
-      const faceSource = skin !== 'default' ? DiceFaceArt?.[skin] : null;
+      const faceArtKey = skin === 'default' ? 'classic' : skin;
+      const faceSource = DiceFaceArt?.[faceArtKey];
       if (faceSource) {
         try {
           const asset = Asset.fromModule(faceSource);
@@ -397,7 +398,8 @@ function Die3D({ sides, rolling, skin = 'default', result = null, onReady }) {
     animate();
   }, [skin, sides]); // re-create GL context when skin or die type changes
 
-  const faceSource = skin !== 'default' ? DiceFaceArt?.[skin] : null;
+  const faceArtKey = skin === 'default' ? 'classic' : skin;
+  const faceSource = DiceFaceArt?.[faceArtKey];
   const numColor   = palette?.num || '#FFFFFF';
   const edgeColor  = palette?.edge || color;
 
@@ -483,7 +485,10 @@ export default function DiceRoller({
   const sides = requiredSides || requiredRoll?.sides || 20;
 
   const getModifier = useCallback(() => {
-    if (!character || !requiredRoll) return 0;
+    if (!requiredRoll) return 0;
+    // If modifier was pre-computed (from action chip skill check), use it directly
+    if (requiredRoll.modifier != null) return requiredRoll.modifier;
+    if (!character) return 0;
     const abilityScore = character.abilityScores?.[requiredRoll.ability] || 10;
     const baseMod = getAbilityMod(abilityScore);
     const isProficient = character.proficientSkills?.includes(requiredRoll.skill);
@@ -672,9 +677,7 @@ export default function DiceRoller({
                 <Text style={[styles.badgeText, { color: badge.color }]}>{badge.label}</Text>
               </View>
             )}
-            {result?.dc != null && (
-              <Text style={styles.dcText}>vs DC {result.dc}</Text>
-            )}
+
           </Animated.View>
 
           {/* Reroll — right side of result row */}

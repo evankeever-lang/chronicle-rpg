@@ -1,10 +1,10 @@
 // ─── Aranthos World Bible — Static Constants ─────────────────────────────────
-// World: Araxys  |  Kingdom: Aranthos
+// World & Kingdom: Aranthos
 // This file is reference data only. Never mutate these objects at runtime.
 // Dynamic player state (faction rep, NPC dispositions, visited locations)
 // lives in GameContext and is persisted via storage.js.
 
-export const WORLD_NAME = 'Araxys';
+export const WORLD_NAME = 'Aranthos';
 export const KINGDOM_NAME = 'Aranthos';
 
 // ─── Regions ─────────────────────────────────────────────────────────────────

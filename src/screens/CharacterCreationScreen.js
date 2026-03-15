@@ -8,7 +8,8 @@ import {
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { LinearGradient } from 'expo-linear-gradient';
 import { RACES, getRaceById } from '../constants/races';
-import { CLASSES, getClassById } from '../constants/classes';
+import { CLASSES, getClassById, getInitialSpellSlots } from '../constants/classes';
+import { BACKGROUNDS, getBackgroundById, computeSkills, ALL_SKILLS, SKILL_DISPLAY_NAMES, SKILL_TO_STAT } from '../constants/backgrounds';
 import { useGame } from '../context/GameContext';
 import { COLORS, FONTS, FONT_SIZES, SPACING, RADIUS, SHADOWS } from '../constants/theme';
 import {
@@ -17,7 +18,7 @@ import {
 } from '../utils/dice';
 import { RaceArt, ClassArt } from '../assets';
 
-const STEPS = ['Race', 'Class', 'Stats', 'Name'];
+const STEPS = ['Race', 'Class', 'Background', 'Stats', 'Name'];
 const POINT_BUY_TOTAL = 27;
 const ABILITY_KEYS = ['STR', 'DEX', 'CON', 'INT', 'WIS', 'CHA'];
 const ABILITY_LABELS = {
@@ -72,6 +73,9 @@ const SWIPE_THRESHOLD = 60;
 const SWIPE_VEL = 0.4;
 
 // ── Swipe Card Deck ────────────────────────────────────────────────────────────
+// Horizontal offset between card center positions (card width = pager step)
+const CARD_PADDING = (SCREEN_W - CARD_W) / 2; // = SPACING.lg
+
 function SwipeCardDeck({ items, artMap, selectedId, onSelect }) {
   const initIdx = selectedId
     ? Math.max(0, items.findIndex(i => i.id === selectedId))
@@ -80,7 +84,10 @@ function SwipeCardDeck({ items, artMap, selectedId, onSelect }) {
   const [displayIdx, setDisplayIdx] = useState(initIdx);
   const idxRef = useRef(initIdx);
 
-  const translateX = useRef(new Animated.Value(0)).current;
+  // scrollX is the absolute pager offset: card i is centered when scrollX === i * CARD_W
+  const scrollX = useRef(new Animated.Value(initIdx * CARD_W)).current;
+  const baseScrollXRef = useRef(initIdx * CARD_W);
+
   const flipAnim = useRef(new Animated.Value(0)).current;
   const isFlippedRef = useRef(false);
 
@@ -97,26 +104,17 @@ function SwipeCardDeck({ items, artMap, selectedId, onSelect }) {
 
   const navigateCard = useCallback((newIdx) => {
     if (newIdx < 0 || newIdx >= items.length) {
-      // Bounce back — at edge
-      Animated.spring(translateX, {
-        toValue: 0, useNativeDriver: false, tension: 200, friction: 15,
+      // Snap back to current
+      Animated.spring(scrollX, {
+        toValue: idxRef.current * CARD_W, useNativeDriver: false, tension: 200, friction: 15,
       }).start();
       return;
     }
-    const goingForward = newIdx > idxRef.current;
-    const exitVal = goingForward ? -SCREEN_W : SCREEN_W;
-    const enterVal = goingForward ? SCREEN_W : -SCREEN_W;
-
-    Animated.timing(translateX, {
-      toValue: exitVal, duration: 200, useNativeDriver: false,
-    }).start(() => {
-      translateX.setValue(enterVal);
-      idxRef.current = newIdx;
-      setDisplayIdx(newIdx);
-      Animated.spring(translateX, {
-        toValue: 0, useNativeDriver: false, tension: 80, friction: 11,
-      }).start();
-    });
+    idxRef.current = newIdx;
+    setDisplayIdx(newIdx);
+    Animated.spring(scrollX, {
+      toValue: newIdx * CARD_W, useNativeDriver: false, tension: 80, friction: 11,
+    }).start();
   }, [items.length]);
 
   const navigateRef = useRef(navigateCard);
@@ -126,24 +124,24 @@ function SwipeCardDeck({ items, artMap, selectedId, onSelect }) {
     onStartShouldSetPanResponder: () => false,
     onMoveShouldSetPanResponder: (_, g) =>
       Math.abs(g.dx) > 8 && Math.abs(g.dx) > Math.abs(g.dy) * 1.5,
-    onPanResponderGrant: () => translateX.stopAnimation(),
-    onPanResponderMove: (_, g) => translateX.setValue(g.dx),
+    onPanResponderGrant: () => {
+      scrollX.stopAnimation();
+      baseScrollXRef.current = idxRef.current * CARD_W;
+    },
+    onPanResponderMove: (_, g) => {
+      const clamped = Math.max(0, Math.min((items.length - 1) * CARD_W, baseScrollXRef.current - g.dx));
+      scrollX.setValue(clamped);
+    },
     onPanResponderRelease: (_, g) => {
       if (g.dx < -SWIPE_THRESHOLD || g.vx < -SWIPE_VEL) {
         navigateRef.current(idxRef.current + 1);
       } else if (g.dx > SWIPE_THRESHOLD || g.vx > SWIPE_VEL) {
         navigateRef.current(idxRef.current - 1);
       } else {
-        Animated.spring(translateX, {
-          toValue: 0, useNativeDriver: false, tension: 200, friction: 15,
-        }).start();
+        navigateRef.current(idxRef.current);
       }
     },
-    onPanResponderTerminate: () => {
-      Animated.spring(translateX, {
-        toValue: 0, useNativeDriver: false, tension: 200, friction: 15,
-      }).start();
-    },
+    onPanResponderTerminate: () => navigateRef.current(idxRef.current),
   })).current;
 
   const handleFlip = () => {
@@ -154,146 +152,161 @@ function SwipeCardDeck({ items, artMap, selectedId, onSelect }) {
     }).start();
   };
 
-  // Front rotates from 0→180, back from -180→0 (avoids mirrored text)
-  const frontRotateY = flipAnim.interpolate({
-    inputRange: [0, 1], outputRange: ['0deg', '180deg'],
-  });
-  const backRotateY = flipAnim.interpolate({
-    inputRange: [0, 1], outputRange: ['-180deg', '0deg'],
-  });
-  // Hide each face once it's past 90°
-  const frontOpacity = flipAnim.interpolate({
-    inputRange: [0.45, 0.55], outputRange: [1, 0],
-  });
-  const backOpacity = flipAnim.interpolate({
-    inputRange: [0.45, 0.55], outputRange: [0, 1],
-  });
+  const frontRotateY = flipAnim.interpolate({ inputRange: [0, 1], outputRange: ['0deg', '180deg'] });
+  const backRotateY = flipAnim.interpolate({ inputRange: [0, 1], outputRange: ['-180deg', '0deg'] });
+  const frontOpacity = flipAnim.interpolate({ inputRange: [0.45, 0.55], outputRange: [1, 0] });
+  const backOpacity = flipAnim.interpolate({ inputRange: [0.45, 0.55], outputRange: [0, 1] });
 
-  const item = items[displayIdx];
-  const art = artMap[item.id];
-  const isRace = 'lore' in item;
+  const maxScroll = Math.max(1, (items.length - 1) * CARD_W);
 
   return (
     <View style={deckStyles.wrapper}>
-      {/* ── Card ─────────────────────────────────────────── */}
       <View style={deckStyles.cardArea} {...panResponder.panHandlers}>
-        <Animated.View style={[deckStyles.cardOuter, { transform: [{ translateX }] }]}>
-          {/* FRONT FACE */}
-          <Animated.View
-            style={[
-              deckStyles.face,
-              {
-                opacity: frontOpacity,
-                transform: [{ perspective: 1200 }, { rotateY: frontRotateY }],
-              },
-            ]}
-            pointerEvents="auto"
-          >
-            <TouchableOpacity
-              style={deckStyles.faceTouch}
-              onPress={handleFlip}
-              activeOpacity={0.95}
+        {/* All cards pre-rendered side-by-side; scrollX drives translateX for each */}
+        {items.map((item, i) => {
+          const art = artMap[item.id];
+          const isRace = 'lore' in item;
+          const isActive = i === displayIdx;
+
+          // Card i is centered at CARD_PADDING + i * CARD_W; subtract scrollX to scroll
+          const cardTranslateX = scrollX.interpolate({
+            inputRange: [0, maxScroll],
+            outputRange: [CARD_PADDING + i * CARD_W, CARD_PADDING + i * CARD_W - maxScroll],
+            extrapolate: 'extend',
+          });
+
+          return (
+            <Animated.View
+              key={item.id}
+              style={[deckStyles.cardOuter, { transform: [{ translateX: cardTranslateX }] }]}
             >
-              {art ? (
-                <Image source={art} style={deckStyles.artImage} resizeMode="cover" />
-              ) : (
-                <View style={[deckStyles.artImage, deckStyles.artPlaceholder]}>
-                  <Text style={deckStyles.placeholderEmoji}>{item.emoji}</Text>
-                </View>
-              )}
-              <LinearGradient
-                colors={['transparent', 'rgba(13,11,7,0.97)']}
-                style={deckStyles.frontGradient}
+              {/* FRONT FACE */}
+              <Animated.View
+                style={[
+                  deckStyles.face,
+                  isActive ? {
+                    opacity: frontOpacity,
+                    transform: [{ perspective: 1200 }, { rotateY: frontRotateY }],
+                  } : undefined,
+                ]}
+                pointerEvents={isActive ? 'auto' : 'none'}
               >
-                <Text style={deckStyles.cardName}>{item.name}</Text>
-                <Text style={deckStyles.cardTagline}>{item.tagline}</Text>
-                <View style={deckStyles.tapHintRow}>
-                  <Text style={deckStyles.tapHint}>Tap to learn more</Text>
-                </View>
-              </LinearGradient>
-            </TouchableOpacity>
-          </Animated.View>
-
-          {/* BACK FACE */}
-          <Animated.View
-            style={[
-              deckStyles.face,
-              deckStyles.backFace,
-              {
-                opacity: backOpacity,
-                transform: [{ perspective: 1200 }, { rotateY: backRotateY }],
-              },
-            ]}
-            pointerEvents="auto"
-          >
-            {/* Back header */}
-            <View style={deckStyles.backHeader}>
-              <Text style={deckStyles.backEmoji}>{item.emoji}</Text>
-              <Text style={deckStyles.backName}>{item.name}</Text>
-              {!isRace && (
-                <View style={deckStyles.hitDiePill}>
-                  <Text style={deckStyles.hitDieText}>d{item.hitDie}</Text>
-                </View>
-              )}
-            </View>
-
-            {/* Scrollable back content */}
-            <ScrollView
-              style={deckStyles.backScroll}
-              contentContainerStyle={deckStyles.backScrollContent}
-              showsVerticalScrollIndicator={false}
-            >
-              <Text style={deckStyles.loreText}>
-                {isRace ? item.lore : item.description}
-              </Text>
-
-              {/* Stat bonuses — races only */}
-              {isRace && (
-                <View style={deckStyles.bonusRow}>
-                  {Object.entries(item.statBonuses).map(([k, v]) => (
-                    <View key={k} style={deckStyles.bonusPill}>
-                      <Text style={deckStyles.bonusText}>{k} {v > 0 ? `+${v}` : v}</Text>
+                <TouchableOpacity
+                  style={deckStyles.faceTouch}
+                  onPress={isActive ? handleFlip : undefined}
+                  activeOpacity={0.95}
+                >
+                  {art ? (
+                    <Image source={art} style={deckStyles.artImage} resizeMode="cover" />
+                  ) : (
+                    <View style={[deckStyles.artImage, deckStyles.artPlaceholder]}>
+                      <Text style={deckStyles.cardName}>{item.name}</Text>
                     </View>
-                  ))}
-                </View>
+                  )}
+                  <LinearGradient
+                    colors={['transparent', 'rgba(13,11,7,0.97)']}
+                    style={deckStyles.frontGradient}
+                  >
+                    <Text style={deckStyles.cardName}>{item.name}</Text>
+                    <Text style={deckStyles.cardTagline}>{item.tagline}</Text>
+                    <View style={deckStyles.tapHintRow}>
+                      <Text style={deckStyles.tapHint}>Tap to learn more</Text>
+                    </View>
+                  </LinearGradient>
+                </TouchableOpacity>
+              </Animated.View>
+
+              {/* BACK FACE — only rendered for active card */}
+              {isActive && (
+                <Animated.View
+                  style={[
+                    deckStyles.face,
+                    deckStyles.backFace,
+                    {
+                      opacity: backOpacity,
+                      transform: [{ perspective: 1200 }, { rotateY: backRotateY }],
+                    },
+                  ]}
+                  pointerEvents="auto"
+                >
+                  <View style={deckStyles.backHeader}>
+                    <Text style={deckStyles.backName}>{item.name}</Text>
+                    {!isRace && (
+                      <View style={deckStyles.hitDiePill}>
+                        <Text style={deckStyles.hitDieText}>d{item.hitDie}</Text>
+                      </View>
+                    )}
+                  </View>
+
+                  <ScrollView
+                    style={deckStyles.backScroll}
+                    contentContainerStyle={deckStyles.backScrollContent}
+                    showsVerticalScrollIndicator={false}
+                  >
+                    <Text style={deckStyles.loreText}>
+                      {isRace ? item.lore : item.description}
+                    </Text>
+
+                    {isRace && (
+                      <View style={deckStyles.bonusRow}>
+                        {Object.entries(item.statBonuses).map(([k, v]) => (
+                          <View key={k} style={deckStyles.bonusPill}>
+                            <Text style={deckStyles.bonusText}>{k} {v > 0 ? `+${v}` : v}</Text>
+                          </View>
+                        ))}
+                      </View>
+                    )}
+
+                    <Text style={deckStyles.sectionLabel}>
+                      {isRace ? 'Racial Traits' : 'Level 1 Abilities'}
+                    </Text>
+                    {(isRace ? item.traits : item.level1Abilities).map(t => (
+                      <View key={t.name} style={deckStyles.traitRow}>
+                        <Text style={deckStyles.traitName}>{t.name}</Text>
+                        <Text style={deckStyles.traitDesc}>{t.description}</Text>
+                      </View>
+                    ))}
+
+                    {!isRace && (
+                      <>
+                        <Text style={deckStyles.sectionLabel}>Saving Throws</Text>
+                        <Text style={deckStyles.saveText}>{item.savingThrows.join(' & ')}</Text>
+                      </>
+                    )}
+                  </ScrollView>
+
+                  <TouchableOpacity style={deckStyles.flipBackOverlay} onPress={handleFlip}>
+                    <View style={deckStyles.tapHintRow}>
+                      <Text style={deckStyles.tapHint}>Tap to turn over</Text>
+                    </View>
+                  </TouchableOpacity>
+                </Animated.View>
               )}
+            </Animated.View>
+          );
+        })}
 
-              <Text style={deckStyles.sectionLabel}>
-                {isRace ? 'Racial Traits' : 'Level 1 Abilities'}
-              </Text>
-              {(isRace ? item.traits : item.level1Abilities).map(t => (
-                <View key={t.name} style={deckStyles.traitRow}>
-                  <Text style={deckStyles.traitName}>{t.name}</Text>
-                  <Text style={deckStyles.traitDesc}>{t.description}</Text>
-                </View>
-              ))}
-
-              {!isRace && (
-                <>
-                  <Text style={deckStyles.sectionLabel}>Saving Throws</Text>
-                  <Text style={deckStyles.saveText}>{item.savingThrows.join(' & ')}</Text>
-                </>
-              )}
-            </ScrollView>
-
-            {/* Flip back */}
-            <TouchableOpacity style={deckStyles.flipBackBtn} onPress={handleFlip}>
-              <Text style={deckStyles.flipBackText}>↩  Show art</Text>
-            </TouchableOpacity>
-          </Animated.View>
-        </Animated.View>
+        {/* Left / right nav arrows — overlaid on card edges */}
+        {displayIdx > 0 && (
+          <TouchableOpacity
+            style={[deckStyles.navArrow, deckStyles.navArrowLeft]}
+            onPress={() => navigateRef.current(displayIdx - 1)}
+          >
+            <Text style={deckStyles.navArrowText}>‹</Text>
+          </TouchableOpacity>
+        )}
+        {displayIdx < items.length - 1 && (
+          <TouchableOpacity
+            style={[deckStyles.navArrow, deckStyles.navArrowRight]}
+            onPress={() => navigateRef.current(displayIdx + 1)}
+          >
+            <Text style={deckStyles.navArrowText}>›</Text>
+          </TouchableOpacity>
+        )}
       </View>
 
-      {/* ── Navigation dots ──────────────────────────────── */}
+      {/* Navigation dots */}
       <View style={deckStyles.dotsRow}>
-        <TouchableOpacity
-          style={[deckStyles.arrowBtn, displayIdx === 0 && deckStyles.arrowBtnDisabled]}
-          onPress={() => navigateRef.current(displayIdx - 1)}
-          disabled={displayIdx === 0}
-        >
-          <Text style={deckStyles.arrowText}>‹</Text>
-        </TouchableOpacity>
-
         <View style={deckStyles.dots}>
           {items.map((_, i) => (
             <TouchableOpacity
@@ -305,14 +318,6 @@ function SwipeCardDeck({ items, artMap, selectedId, onSelect }) {
             </TouchableOpacity>
           ))}
         </View>
-
-        <TouchableOpacity
-          style={[deckStyles.arrowBtn, displayIdx === items.length - 1 && deckStyles.arrowBtnDisabled]}
-          onPress={() => navigateRef.current(displayIdx + 1)}
-          disabled={displayIdx === items.length - 1}
-        >
-          <Text style={deckStyles.arrowText}>›</Text>
-        </TouchableOpacity>
       </View>
     </View>
   );
@@ -325,6 +330,9 @@ export default function CharacterCreationScreen({ navigation }) {
   const [step, setStep] = useState(0);
   const [selectedRaceId, setSelectedRaceId] = useState(null);
   const [selectedClassId, setSelectedClassId] = useState(null);
+  const [selectedBackgroundId, setSelectedBackgroundId] = useState(null);
+  const [expertiseChoices, setExpertiseChoices] = useState([]); // Rogue only
+  const [expertiseSubStep, setExpertiseSubStep] = useState(false);
   const [baseScores, setBaseScores] = useState({ ...BASE_SCORES });
   const [characterName, setCharacterName] = useState('');
   const [useCustomStats, setUseCustomStats] = useState(false);
@@ -332,6 +340,7 @@ export default function CharacterCreationScreen({ navigation }) {
 
   const race = getRaceById(selectedRaceId);
   const cls = getClassById(selectedClassId);
+  const background = getBackgroundById(selectedBackgroundId);
 
   const finalScores = race
     ? ABILITY_KEYS.reduce((acc, k) => ({ ...acc, [k]: baseScores[k] + (race.statBonuses[k] || 0) }), {})
@@ -340,8 +349,9 @@ export default function CharacterCreationScreen({ navigation }) {
   const pointsSpent = getTotalPointsSpent(baseScores);
   const pointsRemaining = POINT_BUY_TOTAL - pointsSpent;
 
+  // Load recommended stats when entering Stats step (step 3)
   useEffect(() => {
-    if (step === 2 && selectedClassId) {
+    if (step === 3 && selectedClassId) {
       const recommended = RECOMMENDED_STATS[selectedClassId];
       if (recommended) {
         setBaseScores({ ...recommended });
@@ -353,9 +363,37 @@ export default function CharacterCreationScreen({ navigation }) {
   const canAdvance = () => {
     if (step === 0) return !!selectedRaceId;
     if (step === 1) return !!selectedClassId;
-    if (step === 2) return pointsRemaining === 0;
-    if (step === 3) return characterName.trim().length >= 2;
+    if (step === 2) {
+      if (!selectedBackgroundId) return false;
+      // If Rogue and expertise sub-step active, need 2 choices
+      if (expertiseSubStep) return expertiseChoices.length === 2;
+      return true;
+    }
+    if (step === 3) return pointsRemaining === 0;
+    if (step === 4) return characterName.trim().length >= 2;
     return false;
+  };
+
+  const handleStepAdvance = () => {
+    if (step === 2 && cls?.hasExpertise && !expertiseSubStep && selectedBackgroundId) {
+      // Enter expertise sub-step for Rogues
+      setExpertiseSubStep(true);
+      return;
+    }
+    if (step < 4) {
+      setStep(s => s + 1);
+      if (step === 2) setExpertiseSubStep(false);
+    } else {
+      handleFinish();
+    }
+  };
+
+  const handleStepBack = () => {
+    if (step === 2 && expertiseSubStep) {
+      setExpertiseSubStep(false);
+      return;
+    }
+    setStep(s => s - 1);
   };
 
   const adjustScore = (key, delta) => {
@@ -371,11 +409,14 @@ export default function CharacterCreationScreen({ navigation }) {
     const profBonus = getProficiencyBonus(1);
     const maxHP = calculateMaxHP(cls.hitDie, 1, finalScores.CON);
     const AC = 10 + getAbilityModifier(finalScores.DEX);
+    const skills = computeSkills(cls, background || { skills: [] }, expertiseChoices);
+    const spellSlots = getInitialSpellSlots(cls);
 
     setCharacter({
       name: characterName.trim(),
       race: { name: race.name, emoji: race.emoji },
-      class: { name: cls.name, emoji: cls.emoji },
+      class: { name: cls.name, emoji: cls.emoji, id: cls.id },
+      background: selectedBackgroundId,
       level: 1,
       abilityScores: finalScores,
       maxHP,
@@ -383,13 +424,25 @@ export default function CharacterCreationScreen({ navigation }) {
       AC,
       speed: race.speed,
       proficiencyBonus: profBonus,
-      proficientSkills: cls.skillChoices?.options?.slice(0, cls.skillChoices.count) || [],
-      inventory: [...(cls.startingEquipment || [])],
+      skills,
+      spellSlots,
+      spellcastingAbility: cls.spellcastingAbility,
+      halfCaster: cls.halfCaster,
+      hitDie: cls.hitDie,
+      inventory: cls.startingEquipment.map((name, i) => ({
+        id: `start_${i}`,
+        name,
+        type: 'misc',
+        weight: 1,
+        equipped: false,
+        quantity: 1,
+        description: '',
+      })),
       gold: 10,
       conditions: [],
     });
 
-    navigation.navigate('DMConversation');
+    navigation.reset({ index: 1, routes: [{ name: 'MainMenu' }, { name: 'DMConversation' }] });
   };
 
   return (
@@ -436,7 +489,28 @@ export default function CharacterCreationScreen({ navigation }) {
         {step === 1 && (
           <StepClass selectedId={selectedClassId} onSelect={setSelectedClassId} />
         )}
-        {step === 2 && (
+        {step === 2 && !expertiseSubStep && (
+          <StepBackground
+            selectedId={selectedBackgroundId}
+            onSelect={setSelectedBackgroundId}
+            cls={cls}
+          />
+        )}
+        {step === 2 && expertiseSubStep && (
+          <StepExpertise
+            cls={cls}
+            background={background}
+            expertiseChoices={expertiseChoices}
+            onToggle={(skill) => {
+              setExpertiseChoices(prev =>
+                prev.includes(skill)
+                  ? prev.filter(s => s !== skill)
+                  : prev.length < 2 ? [...prev, skill] : prev
+              );
+            }}
+          />
+        )}
+        {step === 3 && (
           <StepStats
             baseScores={baseScores}
             finalScores={finalScores}
@@ -453,7 +527,7 @@ export default function CharacterCreationScreen({ navigation }) {
             }}
           />
         )}
-        {step === 3 && (
+        {step === 4 && (
           <StepName
             name={characterName}
             onChange={setCharacterName}
@@ -464,17 +538,19 @@ export default function CharacterCreationScreen({ navigation }) {
 
       {/* Navigation */}
       <View style={styles.navRow}>
-        {step > 0 && (
-          <TouchableOpacity style={styles.backButton} onPress={() => setStep(s => s - 1)}>
+        {(step > 0 || expertiseSubStep) && (
+          <TouchableOpacity style={styles.backButton} onPress={handleStepBack}>
             <Text style={styles.backText}>← Back</Text>
           </TouchableOpacity>
         )}
         <TouchableOpacity
           style={[styles.nextButton, !canAdvance() && styles.nextButtonDisabled]}
-          onPress={() => step < 3 ? setStep(s => s + 1) : handleFinish()}
+          onPress={handleStepAdvance}
           disabled={!canAdvance()}
         >
-          <Text style={styles.nextText}>{step === 3 ? 'Begin Adventure' : 'Continue'}</Text>
+          <Text style={styles.nextText}>
+            {step === 4 ? 'Begin Adventure' : expertiseSubStep ? 'Confirm Expertise' : 'Continue'}
+          </Text>
         </TouchableOpacity>
       </View>
       <SettingsModal visible={settingsVisible} onClose={() => setSettingsVisible(false)} />
@@ -510,6 +586,104 @@ function StepClass({ selectedId, onSelect }) {
         selectedId={selectedId}
         onSelect={onSelect}
       />
+    </View>
+  );
+}
+
+// ── Step: Background ───────────────────────────────────────────────────────────
+function StepBackground({ selectedId, onSelect, cls }) {
+  const classLocked = cls?.lockedProficiencies || [];
+
+  return (
+    <View style={styles.stepContainer}>
+      <Text style={styles.stepTitle}>Choose Your Background</Text>
+      <Text style={styles.stepSub}>Your history defines the skills you bring to the road.</Text>
+
+      <View style={bgStyles.grid}>
+        {BACKGROUNDS.map(bg => {
+          const allSkills = [...new Set([...bg.skills, ...classLocked])];
+          const isSelected = selectedId === bg.id;
+
+          return (
+            <TouchableOpacity
+              key={bg.id}
+              style={[bgStyles.card, isSelected && bgStyles.cardSelected]}
+              onPress={() => onSelect(bg.id)}
+              activeOpacity={0.85}
+            >
+              {isSelected && (
+                <View style={bgStyles.checkmark}>
+                  <Text style={bgStyles.checkmarkText}>✓</Text>
+                </View>
+              )}
+              <Text style={bgStyles.cardName}>{bg.name}</Text>
+              <Text style={bgStyles.cardTagline}>{bg.tagline}</Text>
+              <View style={bgStyles.badgeRow}>
+                {allSkills.map(skill => (
+                  <View
+                    key={skill}
+                    style={[bgStyles.badge, classLocked.includes(skill) && bgStyles.badgeLocked]}
+                  >
+                    <Text style={[bgStyles.badgeText, classLocked.includes(skill) && bgStyles.badgeTextLocked]}>
+                      {SKILL_DISPLAY_NAMES[skill] || skill}
+                      {classLocked.includes(skill) ? ' ★' : ''}
+                    </Text>
+                  </View>
+                ))}
+              </View>
+            </TouchableOpacity>
+          );
+        })}
+      </View>
+
+      {cls && (
+        <Text style={bgStyles.classNote}>
+          ★ Always granted by {cls.name}
+        </Text>
+      )}
+    </View>
+  );
+}
+
+// ── Step: Expertise (Rogue only) ───────────────────────────────────────────────
+function StepExpertise({ cls, background, expertiseChoices, onToggle }) {
+  const proficientSkills = [
+    ...new Set([
+      ...(cls?.lockedProficiencies || []),
+      ...(background?.skills || []),
+    ]),
+  ];
+
+  return (
+    <View style={styles.stepContainer}>
+      <Text style={styles.stepTitle}>Choose Expertise</Text>
+      <Text style={styles.stepSub}>
+        As a Rogue, you double your proficiency bonus on 2 chosen skills. Choose wisely.
+      </Text>
+
+      <View style={[bgStyles.card, { marginBottom: SPACING.md }]}>
+        <Text style={bgStyles.cardName}>Selected: {expertiseChoices.length} / 2</Text>
+        <Text style={bgStyles.cardTagline}>Expertise doubles your proficiency bonus on these skills.</Text>
+      </View>
+
+      {proficientSkills.map(skill => {
+        const isChosen = expertiseChoices.includes(skill);
+        const isDisabled = !isChosen && expertiseChoices.length >= 2;
+        return (
+          <TouchableOpacity
+            key={skill}
+            style={[expertStyles.row, isChosen && expertStyles.rowChosen, isDisabled && expertStyles.rowDisabled]}
+            onPress={() => !isDisabled && onToggle(skill)}
+            activeOpacity={isDisabled ? 1 : 0.8}
+          >
+            <View style={[expertStyles.pip, isChosen && expertStyles.pipChosen]} />
+            <Text style={[expertStyles.skillName, isChosen && expertStyles.skillNameChosen]}>
+              {SKILL_DISPLAY_NAMES[skill] || skill}
+            </Text>
+            <Text style={expertStyles.statTag}>{SKILL_TO_STAT[skill]}</Text>
+          </TouchableOpacity>
+        );
+      })}
     </View>
   );
 }
@@ -668,21 +842,159 @@ function StepName({ name, onChange, character }) {
   );
 }
 
+// ── Background step styles ─────────────────────────────────────────────────────
+const bgStyles = StyleSheet.create({
+  grid: {
+    gap: SPACING.sm,
+  },
+  card: {
+    backgroundColor: COLORS.surface,
+    borderWidth: 1,
+    borderColor: COLORS.border,
+    borderRadius: RADIUS.lg,
+    padding: SPACING.md,
+    position: 'relative',
+  },
+  cardSelected: {
+    borderColor: COLORS.primary,
+    backgroundColor: COLORS.primaryFaint,
+  },
+  checkmark: {
+    position: 'absolute',
+    top: SPACING.sm,
+    right: SPACING.sm,
+    width: 20,
+    height: 20,
+    borderRadius: 10,
+    backgroundColor: COLORS.primary,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  checkmarkText: {
+    color: COLORS.black,
+    fontSize: 11,
+    fontWeight: '800',
+  },
+  cardName: {
+    fontFamily: FONTS.serif,
+    fontSize: FONT_SIZES.md,
+    color: COLORS.textPrimary,
+    fontWeight: '700',
+    marginBottom: 3,
+    marginRight: SPACING.lg,
+  },
+  cardTagline: {
+    fontFamily: FONTS.sansSerif,
+    fontSize: FONT_SIZES.xs,
+    color: COLORS.textMuted,
+    lineHeight: 16,
+    marginBottom: SPACING.sm,
+    fontStyle: 'italic',
+  },
+  badgeRow: {
+    flexDirection: 'row',
+    flexWrap: 'wrap',
+    gap: 4,
+  },
+  badge: {
+    backgroundColor: COLORS.surfaceElevated,
+    borderWidth: 1,
+    borderColor: COLORS.border,
+    borderRadius: RADIUS.pill,
+    paddingHorizontal: 6,
+    paddingVertical: 2,
+  },
+  badgeLocked: {
+    backgroundColor: COLORS.primaryFaint,
+    borderColor: COLORS.primaryDark,
+  },
+  badgeText: {
+    fontFamily: FONTS.sansSerif,
+    fontSize: 10,
+    color: COLORS.textMuted,
+    fontWeight: '600',
+  },
+  badgeTextLocked: {
+    color: COLORS.primary,
+  },
+  classNote: {
+    fontFamily: FONTS.sansSerif,
+    fontSize: FONT_SIZES.xs,
+    color: COLORS.textMuted,
+    marginTop: SPACING.md,
+    textAlign: 'center',
+    fontStyle: 'italic',
+  },
+});
+
+// ── Expertise step styles ──────────────────────────────────────────────────────
+const expertStyles = StyleSheet.create({
+  row: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    backgroundColor: COLORS.surface,
+    borderWidth: 1,
+    borderColor: COLORS.border,
+    borderRadius: RADIUS.md,
+    padding: SPACING.md,
+    marginBottom: SPACING.sm,
+    gap: SPACING.sm,
+  },
+  rowChosen: {
+    borderColor: COLORS.primary,
+    backgroundColor: COLORS.primaryFaint,
+  },
+  rowDisabled: {
+    opacity: 0.4,
+  },
+  pip: {
+    width: 16,
+    height: 16,
+    borderRadius: 8,
+    borderWidth: 2,
+    borderColor: COLORS.border,
+    backgroundColor: 'transparent',
+  },
+  pipChosen: {
+    backgroundColor: COLORS.primary,
+    borderColor: COLORS.primary,
+  },
+  skillName: {
+    flex: 1,
+    fontFamily: FONTS.sansSerif,
+    fontSize: FONT_SIZES.md,
+    color: COLORS.textSecondary,
+    fontWeight: '600',
+  },
+  skillNameChosen: {
+    color: COLORS.primary,
+  },
+  statTag: {
+    fontFamily: FONTS.sansSerif,
+    fontSize: FONT_SIZES.xs,
+    color: COLORS.textMuted,
+    fontWeight: '700',
+  },
+});
+
 // ── Deck styles ────────────────────────────────────────────────────────────────
 const deckStyles = StyleSheet.create({
   wrapper: {
     alignItems: 'center',
-    paddingTop: SPACING.sm,
   },
   cardArea: {
+    width: SCREEN_W,
+    height: CARD_H,
+    overflow: 'hidden',
+  },
+  cardOuter: {
+    position: 'absolute',
+    top: 0,
+    left: 0,
     width: CARD_W,
     height: CARD_H,
     borderRadius: RADIUS.xxl,
     overflow: 'hidden',
-  },
-  cardOuter: {
-    width: CARD_W,
-    height: CARD_H,
   },
   face: {
     position: 'absolute',
@@ -721,7 +1033,7 @@ const deckStyles = StyleSheet.create({
     right: 0,
     paddingHorizontal: SPACING.lg,
     paddingTop: SPACING.xl,
-    paddingBottom: SPACING.lg,
+    paddingBottom: SPACING.lg + 10,
     borderBottomLeftRadius: RADIUS.xxl,
     borderBottomRightRadius: RADIUS.xxl,
   },
@@ -754,8 +1066,6 @@ const deckStyles = StyleSheet.create({
     color: COLORS.primary,
     fontWeight: '600',
   },
-
-  // Back face
   backHeader: {
     flexDirection: 'row',
     alignItems: 'center',
@@ -859,23 +1169,24 @@ const deckStyles = StyleSheet.create({
     borderColor: COLORS.border,
     alignItems: 'center',
   },
+  flipBackOverlay: {
+    position: 'absolute',
+    bottom: SPACING.lg + 10,
+    left: SPACING.lg,
+  },
   flipBackText: {
     fontFamily: FONTS.sansSerif,
     fontSize: FONT_SIZES.sm,
     color: COLORS.textMuted,
   },
-
-  // Dots / arrows
   dotsRow: {
     flexDirection: 'row',
     alignItems: 'center',
+    justifyContent: 'center',
     marginTop: SPACING.md,
-    gap: SPACING.sm,
   },
   dots: {
-    flex: 1,
     flexDirection: 'row',
-    justifyContent: 'center',
     alignItems: 'center',
     gap: 8,
   },
@@ -890,18 +1201,29 @@ const deckStyles = StyleSheet.create({
     width: 20,
     borderRadius: 4,
   },
-  arrowBtn: {
-    width: 36,
-    height: 36,
-    alignItems: 'center',
+  navArrow: {
+    position: 'absolute',
+    top: 0,
+    bottom: 0,
+    width: 44,
     justifyContent: 'center',
+    alignItems: 'center',
+    zIndex: 10,
   },
-  arrowBtnDisabled: { opacity: 0.25 },
-  arrowText: {
+  navArrowLeft: {
+    left: 0,
+  },
+  navArrowRight: {
+    right: 0,
+  },
+  navArrowText: {
     fontFamily: FONTS.sansSerif,
-    fontSize: 28,
+    fontSize: 32,
     color: COLORS.primary,
-    lineHeight: 32,
+    lineHeight: 36,
+    textShadowColor: 'rgba(0,0,0,0.8)',
+    textShadowOffset: { width: 0, height: 1 },
+    textShadowRadius: 4,
   },
 });
 
@@ -923,8 +1245,6 @@ const styles = StyleSheet.create({
     color: COLORS.textSecondary,
     marginBottom: SPACING.lg,
   },
-
-  // Top bar
   topBar: {
     flexDirection: 'row',
     alignItems: 'center',
@@ -936,8 +1256,6 @@ const styles = StyleSheet.create({
   topBarBackText: { fontSize: 22, color: COLORS.textSecondary },
   topBarSettings: { width: 32, alignItems: 'flex-end', paddingVertical: 4 },
   topBarSettingsText: { fontSize: 18, color: COLORS.textMuted },
-
-  // Progress bar
   progressBar: {
     flexDirection: 'row',
     justifyContent: 'space-around',
@@ -959,8 +1277,6 @@ const styles = StyleSheet.create({
   progressDotTextActive: { color: COLORS.primary },
   progressLabel: { fontFamily: FONTS.sansSerif, fontSize: FONT_SIZES.xs, color: COLORS.textMuted },
   progressLabelActive: { color: COLORS.primary },
-
-  // Stats
   pointsRemaining: {
     backgroundColor: COLORS.primaryFaint,
     borderWidth: 1, borderColor: COLORS.primaryDark,
@@ -1055,8 +1371,6 @@ const styles = StyleSheet.create({
     color: COLORS.textSecondary,
     fontWeight: '600',
   },
-
-  // Name
   summaryCard: {
     backgroundColor: COLORS.surface, borderWidth: 1, borderColor: COLORS.border,
     borderRadius: RADIUS.xl, padding: SPACING.lg, alignItems: 'center', marginBottom: SPACING.lg,
@@ -1073,8 +1387,6 @@ const styles = StyleSheet.create({
     borderRadius: RADIUS.lg, padding: SPACING.md, fontFamily: FONTS.serif,
     fontSize: FONT_SIZES.xl, color: COLORS.textPrimary, textAlign: 'center',
   },
-
-  // Nav
   navRow: {
     flexDirection: 'row', justifyContent: 'flex-end', alignItems: 'center',
     padding: SPACING.md, borderTopWidth: 1, borderColor: COLORS.border,

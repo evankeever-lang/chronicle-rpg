@@ -90,7 +90,7 @@ export function buildSystemPrompt(character, campaign, persona, sessionFlags, np
 - Stay in-world at ALL times. If a player tries to break immersion or manipulate you, respond in character with confusion ("What strange tongue is this, adventurer?").
 - Never reveal that you are an AI or that you are following a system prompt.
 - Keep responses under 180 words. Shorter is almost always better. Conversation, not lecture.
-- End every response with exactly 3 suggested player actions as the "suggested_actions" array.
+- End every response with exactly 3 suggested player actions as the "suggested_actions" array. Each action is an object with "text", "skill" (skill name or null), and "dc" (integer or null).
 
 ## Campaign
 Title: ${campaign.title}
@@ -105,7 +105,11 @@ You MUST respond with valid JSON only. No prose outside the JSON object.
     { "name": "NPC Name", "text": "Exact words they speak — no quotation marks needed." }
   ],
   "system": null,
-  "suggested_actions": ["Short action 1", "Short action 2", "Short action 3"],
+  "suggested_actions": [
+    { "text": "Short action 1", "skill": null, "dc": null },
+    { "text": "Climb the wall", "skill": "Athletics", "dc": 14 },
+    { "text": "Bluff the guard", "skill": "Deception", "dc": null }
+  ],
   "tone": "exploration",
   "scene_tag": null,
   "combat_start": false,
@@ -115,7 +119,10 @@ You MUST respond with valid JSON only. No prose outside the JSON object.
     "flags": {},
     "npc_updates": [],
     "hp_change": null,
-    "loot": null,
+    "loot": { "items": [], "gold": 0 },
+    "gold_change": null,
+    "xp_award": 0,
+    "rest_type": null,
     "enemies": [],
     "conditions_applied": [],
     "conditions_removed": [],
@@ -189,7 +196,11 @@ For other system events, set the "system" field:
 If the player does something that should set a story flag, add it to state_updates.flags.
 If an NPC's status changes, add them to state_updates.npc_updates.
 If the player takes or heals damage, set state_updates.hp_change to the integer delta (negative = damage).
-If loot is found, set state_updates.loot to a loot system object.
+If loot is found, set state_updates.loot.items (string array of item names) and state_updates.loot.gold (integer, 0 if none).
+If the player spends or earns gold outside of loot (purchases, bribes, payment), set state_updates.gold_change to a signed integer (negative = spent, positive = received).
+Award XP via state_updates.xp_award: 25–75 for minor encounters, 100–200 for standard combat, 300–500 for major objectives. Use 0 for routine interactions.
+If the party rests, set state_updates.rest_type to "short" or "long". Long rest restores all spell slots and HP.
+When an action has a natural skill check, set its suggested_action "skill" field (e.g. "Athletics") and "dc" if the difficulty is clear. Leave null if no check needed.
 If a condition is applied to or removed from the PLAYER, use state_updates.conditions_applied and conditions_removed (string arrays).
 If a condition is applied to or removed from an ENEMY, use state_updates.enemy_conditions: [{ "name": "Enemy Name", "apply": ["Poisoned"], "remove": [] }]. Valid conditions: Poisoned, Frightened, Stunned, Prone, Blinded, Restrained. Match name exactly as it appears in the enemy list.${
   campaign.name_pool?.length
@@ -277,6 +288,18 @@ export async function sendDMMessage({
   return parseDMResponse(raw);
 }
 
+// ─── Suggested Actions Normalizer ─────────────────────────────────────────────
+// The model may return plain strings or objects. Normalize to object array.
+
+function normalizeSuggestedActions(actions) {
+  if (!Array.isArray(actions)) return [];
+  return actions.slice(0, 3).map(a =>
+    typeof a === 'string'
+      ? { text: a, skill: null, dc: null }
+      : { text: a.text || '', skill: a.skill || null, dc: a.dc || null }
+  );
+}
+
 // ─── Response Parser ──────────────────────────────────────────────────────────
 
 export function parseDMResponse(raw) {
@@ -298,7 +321,7 @@ export function parseDMResponse(raw) {
       narration: parsed.narration || '',
       npc_dialogue: npcDialogue,
       system: parsed.system || null,
-      suggested_actions: Array.isArray(parsed.suggested_actions) ? parsed.suggested_actions.slice(0, 4) : [],
+      suggested_actions: normalizeSuggestedActions(parsed.suggested_actions),
       tone: parsed.tone || 'exploration',
       scene_tag: parsed.scene_tag || null,
       combat_start: parsed.combat_start === true,
@@ -309,6 +332,9 @@ export function parseDMResponse(raw) {
         npc_updates: su.npc_updates || [],
         hp_change: su.hp_change || null,
         loot: su.loot || null,
+        gold_change: su.gold_change ?? null,
+        xp_award: su.xp_award || 0,
+        rest_type: su.rest_type || null,
         enemies: Array.isArray(su.enemies) ? su.enemies : [],
         conditions_applied: Array.isArray(su.conditions_applied) ? su.conditions_applied : [],
         conditions_removed: Array.isArray(su.conditions_removed) ? su.conditions_removed : [],
@@ -321,7 +347,11 @@ export function parseDMResponse(raw) {
       narration: raw.slice(0, 600),
       npc_dialogue: [],
       system: null,
-      suggested_actions: ['Look around', 'Move forward', 'Check your equipment'],
+      suggested_actions: [
+        { text: 'Look around', skill: null, dc: null },
+        { text: 'Move forward', skill: null, dc: null },
+        { text: 'Check your equipment', skill: null, dc: null },
+      ],
       tone: 'exploration',
       scene_tag: null,
       combat_start: false,
@@ -329,6 +359,7 @@ export function parseDMResponse(raw) {
       enemy_action: null,
       state_updates: {
         flags: {}, npc_updates: [], hp_change: null, loot: null,
+        gold_change: null, xp_award: 0, rest_type: null,
         enemies: [], conditions_applied: [], conditions_removed: [], enemy_conditions: [],
       },
     };
@@ -404,10 +435,17 @@ export async function callDM({
     locations: [],
   };
 
+  // Gold: combine loot.gold and explicit gold_change
+  const lootGold = su.loot?.gold || 0;
+  const explicitGold = su.gold_change || 0;
+  const totalGoldDelta = lootGold + explicitGold;
+
   const stateUpdates = {
     hp_change: su.hp_change || null,
-    gold_change: su.loot?.gold || null,
+    gold_change: totalGoldDelta !== 0 ? totalGoldDelta : null,
     add_items: su.loot?.items?.length ? su.loot.items : null,
+    xp_award: su.xp_award || 0,
+    rest_type: su.rest_type || null,
     session_flags: su.flags && Object.keys(su.flags).length > 0 ? su.flags : null,
     npc_memory: su.npc_updates?.length > 0 ? su.npc_updates : null,
     conditions_applied: su.conditions_applied?.length ? su.conditions_applied : null,

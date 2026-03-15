@@ -35,8 +35,12 @@ export const COLORS = {
 };
 
 export const FONTS = {
-  serif: 'Georgia',
-  sansSerif: 'System',
+  display: 'Cinzel_700Bold',          // titles, button labels, screen headers
+  displayLight: 'Cinzel_400Regular',  // subheadings, section labels
+  serif: 'EBGaramond_400Regular',     // DM narration, flavour text, lore
+  serifMedium: 'EBGaramond_500Medium',// NPC speech, important prose
+  ui: 'CrimsonPro_400Regular',        // stat labels, menu items, small text
+  uiBold: 'CrimsonPro_600SemiBold',   // HP numbers, gold amounts, key values
 };
 
 export const FONT_SIZES = {

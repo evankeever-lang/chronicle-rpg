@@ -16,6 +16,23 @@ export const CLASSES = [
       { name: 'Second Wind', description: 'As a bonus action, regain 1d10 + Fighter level HP. Once per short rest.' },
       { name: 'Fighting Style', description: 'Choose a fighting style: Defense (+1 AC in armor), Dueling (+2 damage with one-handed weapon), or Great Weapon Fighting (reroll 1s and 2s on damage with two-handed weapons).' },
     ],
+    lockedProficiencies: ['athletics'],
+    spellcaster: false,
+    spellcastingAbility: null,
+    halfCaster: false,
+    hasExpertise: false,
+    classFeaturesByLevel: {
+      2: ['Action Surge — Take one additional action on your turn, once per short rest'],
+      3: ['Martial Archetype — Choose your fighting style specialisation'],
+      4: ['Ability Score Improvement'],
+      5: ['Extra Attack — Attack twice whenever you take the Attack action'],
+      6: ['Ability Score Improvement'],
+      7: ['Archetype Feature'],
+      8: ['Ability Score Improvement'],
+      9: ['Indomitable — Reroll a failed saving throw, once per long rest'],
+      10: ['Archetype Feature'],
+    },
+    spellsByLevel: { 1: [], 2: [], 3: [], 4: [], 5: [] },
   },
   {
     id: 'wizard',
@@ -34,6 +51,23 @@ export const CLASSES = [
       { name: 'Spellcasting', description: 'You can cast wizard spells using INT as your spellcasting ability. Spell save DC = 8 + proficiency + INT modifier.' },
       { name: 'Arcane Recovery', description: 'Once per day during a short rest, recover spell slots totaling up to half your wizard level (rounded up).' },
     ],
+    lockedProficiencies: ['arcana'],
+    spellcaster: true,
+    spellcastingAbility: 'INT',
+    halfCaster: false,
+    hasExpertise: false,
+    classFeaturesByLevel: {
+      2: ['Arcane Tradition — Choose your school of magic specialisation'],
+      3: ['Cantrip Formulas — Study your spellbook to replace a cantrip'],
+      4: ['Ability Score Improvement'],
+      5: ['3rd-Level Spells Unlocked'],
+      6: ['Arcane Tradition Feature'],
+      7: ['4th-Level Spells Unlocked'],
+      8: ['Ability Score Improvement'],
+      9: ['5th-Level Spells Unlocked'],
+      10: ['Arcane Tradition Feature'],
+    },
+    spellsByLevel: { 1: [], 2: [], 3: [], 4: [], 5: [] },
   },
   {
     id: 'rogue',
@@ -53,6 +87,24 @@ export const CLASSES = [
       { name: 'Sneak Attack', description: 'Once per turn, deal extra 1d6 damage when you have advantage or an ally is adjacent to your target.' },
       { name: "Thieves' Cant", description: 'You know a secret mix of language and signals used by the criminal underground.' },
     ],
+    lockedProficiencies: ['stealth'],
+    spellcaster: false,
+    spellcastingAbility: null,
+    halfCaster: false,
+    hasExpertise: true,
+    sneakAttackDice: (level) => Math.ceil(level / 2),
+    classFeaturesByLevel: {
+      2: ['Cunning Action — Dash, Disengage, or Hide as a bonus action'],
+      3: ['Roguish Archetype — Choose your path'],
+      4: ['Ability Score Improvement'],
+      5: ['Uncanny Dodge — Halve the damage of one attack you can see per round'],
+      6: ['Expertise — Double proficiency bonus on two more chosen skills'],
+      7: ['Evasion — Take no damage on a successful DEX save, half on failure'],
+      8: ['Ability Score Improvement'],
+      9: ['Archetype Feature'],
+      10: ['Ability Score Improvement'],
+    },
+    spellsByLevel: { 1: [], 2: [], 3: [], 4: [], 5: [] },
   },
   {
     id: 'cleric',
@@ -71,6 +123,23 @@ export const CLASSES = [
       { name: 'Spellcasting', description: 'You can cast cleric spells using WIS as your spellcasting ability. Spell save DC = 8 + proficiency + WIS modifier.' },
       { name: 'Divine Domain', description: 'Choose a domain at level 1: Life (healing focused) or Light (radiant damage focused). Grants domain spells and features.' },
     ],
+    lockedProficiencies: ['religion'],
+    spellcaster: true,
+    spellcastingAbility: 'WIS',
+    halfCaster: false,
+    hasExpertise: false,
+    classFeaturesByLevel: {
+      2: ['Channel Divinity — Turn Undead or use your domain ability, once per short rest'],
+      3: ['2nd-Level Spells Unlocked'],
+      4: ['Ability Score Improvement'],
+      5: ['Destroy Undead (CR 1/2)', '3rd-Level Spells Unlocked'],
+      6: ['Channel Divinity recharge improves'],
+      7: ['4th-Level Spells Unlocked'],
+      8: ['Ability Score Improvement', 'Destroy Undead (CR 1)'],
+      9: ['5th-Level Spells Unlocked'],
+      10: ['Divine Intervention — Call on your deity for miraculous aid once per week'],
+    },
+    spellsByLevel: { 1: [], 2: [], 3: [], 4: [], 5: [] },
   },
   {
     id: 'ranger',
@@ -89,6 +158,23 @@ export const CLASSES = [
       { name: 'Favored Enemy', description: 'Choose a type of enemy (beasts, undead, humanoids, etc.). Advantage on survival checks to track them and on intelligence checks to recall information about them.' },
       { name: 'Natural Explorer', description: 'Choose a favored terrain type. While traveling in that terrain, difficult terrain does not slow your group, you cannot get lost by nonmagical means, and you remain alert while foraging.' },
     ],
+    lockedProficiencies: ['perception'],
+    spellcaster: true,
+    spellcastingAbility: 'WIS',
+    halfCaster: true,
+    hasExpertise: false,
+    classFeaturesByLevel: {
+      2: ['Fighting Style', '1st-Level Spells Unlocked (half caster)'],
+      3: ['Ranger Archetype — Choose your specialisation', 'Primeval Awareness'],
+      4: ['Ability Score Improvement'],
+      5: ['Extra Attack — Attack twice whenever you take the Attack action', '2nd-Level Spells Unlocked'],
+      6: ['Favored Enemy and Natural Explorer improvements'],
+      7: ['Archetype Feature'],
+      8: ['Ability Score Improvement', "Land's Stride"],
+      9: ['3rd-Level Spells Unlocked'],
+      10: ['Natural Explorer (3rd terrain)', "Hide in Plain Sight"],
+    },
+    spellsByLevel: { 1: [], 2: [], 3: [], 4: [], 5: [] },
   },
   {
     id: 'paladin',
@@ -107,7 +193,63 @@ export const CLASSES = [
       { name: 'Divine Sense', description: 'As an action, detect the presence of powerful good or evil within 60 ft. Usable 1 + CHA modifier times per long rest.' },
       { name: 'Lay on Hands', description: 'A pool of healing power equal to 5 × paladin level. As an action, restore HP from this pool to a creature you touch.' },
     ],
+    lockedProficiencies: ['insight'],
+    spellcaster: true,
+    spellcastingAbility: 'CHA',
+    halfCaster: true,
+    hasExpertise: false,
+    classFeaturesByLevel: {
+      2: ['Fighting Style', 'Spellcasting — 1st-Level Spells Unlocked (half caster)', 'Divine Smite'],
+      3: ['Sacred Oath — Choose your oath', 'Divine Health — Immune to disease'],
+      4: ['Ability Score Improvement'],
+      5: ['Extra Attack — Attack twice whenever you take the Attack action', '2nd-Level Spells Unlocked'],
+      6: ['Aura of Protection — Allies within 10 ft add CHA mod to saving throws'],
+      7: ['Sacred Oath Feature'],
+      8: ['Ability Score Improvement'],
+      9: ['3rd-Level Spells Unlocked'],
+      10: ['Aura of Courage — Allies within 10 ft cannot be frightened'],
+    },
+    spellsByLevel: { 1: [], 2: [], 3: [], 4: [], 5: [] },
   },
 ];
 
 export const getClassById = (id) => CLASSES.find(c => c.id === id);
+
+// Spell slot tables
+export const FULL_CASTER_SLOTS = {
+  1:  { 1: 2, 2: 0, 3: 0, 4: 0, 5: 0 },
+  2:  { 1: 3, 2: 0, 3: 0, 4: 0, 5: 0 },
+  3:  { 1: 4, 2: 2, 3: 0, 4: 0, 5: 0 },
+  4:  { 1: 4, 2: 3, 3: 0, 4: 0, 5: 0 },
+  5:  { 1: 4, 2: 3, 3: 2, 4: 0, 5: 0 },
+  6:  { 1: 4, 2: 3, 3: 3, 4: 0, 5: 0 },
+  7:  { 1: 4, 2: 3, 3: 3, 4: 1, 5: 0 },
+  8:  { 1: 4, 2: 3, 3: 3, 4: 2, 5: 0 },
+  9:  { 1: 4, 2: 3, 3: 3, 4: 3, 5: 1 },
+  10: { 1: 4, 2: 3, 3: 3, 4: 3, 5: 2 },
+};
+
+export const HALF_CASTER_SLOTS = {
+  1:  { 1: 0, 2: 0, 3: 0, 4: 0, 5: 0 },
+  2:  { 1: 2, 2: 0, 3: 0, 4: 0, 5: 0 },
+  3:  { 1: 3, 2: 0, 3: 0, 4: 0, 5: 0 },
+  4:  { 1: 3, 2: 0, 3: 0, 4: 0, 5: 0 },
+  5:  { 1: 4, 2: 2, 3: 0, 4: 0, 5: 0 },
+  6:  { 1: 4, 2: 2, 3: 0, 4: 0, 5: 0 },
+  7:  { 1: 4, 2: 3, 3: 0, 4: 0, 5: 0 },
+  8:  { 1: 4, 2: 3, 3: 0, 4: 0, 5: 0 },
+  9:  { 1: 4, 2: 3, 3: 2, 4: 0, 5: 0 },
+  10: { 1: 4, 2: 3, 3: 2, 4: 0, 5: 0 },
+};
+
+export const XP_THRESHOLDS = [0, 300, 900, 2700, 6500, 14000, 23000, 34000, 48000, 64000];
+// Index = level - 1. XP needed to reach level N = XP_THRESHOLDS[N-1].
+
+export function getInitialSpellSlots(classData) {
+  if (!classData.spellcaster) {
+    return { current: { 1: 0, 2: 0, 3: 0, 4: 0, 5: 0 }, max: { 1: 0, 2: 0, 3: 0, 4: 0, 5: 0 } };
+  }
+  const table = classData.halfCaster ? HALF_CASTER_SLOTS : FULL_CASTER_SLOTS;
+  const slots = table[1];
+  return { current: { ...slots }, max: { ...slots } };
+}

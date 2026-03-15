@@ -44,7 +44,7 @@ Six workstreams to reach soft-launch readiness. Build in this order:
 - **Art asset reorganisation** — all art moved from flat `src/assets/` into typed subdirectories: `campaigns/`, `classes/`, `dice/`, `icons/`, `races/`, `splash/`, `ui/`, `sfx/`, `music/`; `src/assets/index.js` exports `RaceArt`, `ClassArt`, `CampaignArt`, `SpawnArt`, `DiceFaceArt`, `IconArt`, `Splashes`
 - **GifHealthBar** — `src/components/GifHealthBar.js`; renders correct frame from extracted GIF frames based on HP%; falls back to plain colour bar if frames not extracted; extraction script at `scripts/extract-health-bar-frames.js`
 - **Campaign architecture rebuilt** — tutorial removed entirely; replaced with spawn-point model (see Campaign Architecture section); contextual mechanic nudges replace tutorial beats
-- **World bible** — `src/constants/world.js`; Araxys world / Aranthos kingdom; 6 regions with dominant races and faction control; 5 factions (Crown, Broken Chain, Deep Accord, Thornbound, Crimson Veil); used as DM reference context
+- **World bible** — `src/constants/world.js`; Aranthos world & kingdom; 6 regions with dominant races and faction control; 5 factions (Crown, Broken Chain, Deep Accord, Thornbound, Crimson Veil); used as DM reference context
 - **Character creation overhaul** — race/class art portraits, recommended stat presets per class, per-stat rationale tooltips, `SettingsModal` accessible from header
 - **seenMechanics nudge system** — `seenMechanics: Set` in GameContext; tracks which mechanics the player has encountered this session (`skill_check`, `combat`, `inventory`); `DMConversationScreen` injects contextual nudges at message thresholds (skill_check nudge at turn 3, combat nudge at turn 6, inventory nudge at turn 12) if the mechanic hasn't fired naturally
 
@@ -566,7 +566,7 @@ chronicle-rpg/
     │   ├── classes.js              ← 6 classes with full DnD 5e mechanics
     │   ├── campaigns.js            ← CAMPAIGNS array + SPAWN_POINTS array + name_pool per campaign
     │   ├── personas.js             ← 4 DM persona presets with system prompt tone
-    │   └── world.js                ← Araxys world bible: REGIONS, FACTIONS, CITIES (static reference)
+    │   └── world.js                ← Aranthos world bible: REGIONS, FACTIONS, CITIES (static reference)
     ├── context/
     │   └── GameContext.js          ← Full game state, reducer, action creators
     │                                  Combat: START_COMBAT, ADVANCE_TURN, APPLY_DAMAGE, END_COMBAT
@@ -726,7 +726,7 @@ When it's the player's turn:
 ## World Lore & Campaign Canon
 
 ### The World (Established)
-**World:** Araxys | **Kingdom:** Aranthos
+**World & Kingdom:** Aranthos
 
 Canonical data lives in `src/constants/world.js`. Do not over-specify — the AI DM fills in texture. These are the fixed anchors for consistency across all campaigns.
 
