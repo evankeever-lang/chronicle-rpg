@@ -234,81 +234,6 @@ If loot is found, set state_updates.loot to a loot system object.${
   return { staticBlock, dynamicBlock };
 }
 
-// ─── Tutorial Beat Resolver ───────────────────────────────────────────────────
-
-// Returns the branched Mik callback injection text based on what happened to Mik.
-// Used by both mik_callback and mik_callback_forced beats (sentinel '__MIK_CALLBACK__').
-export function getMikCallbackInjection(sessionFlags) {
-  if (sessionFlags.goblin_spared) {
-    return `SCENE DIRECTIVE (this turn only): Weave in a brief moment — a traveler passing through mentions seeing a small goblin helping people on the road east, an odd sight but a kind one. One sentence woven naturally into the scene. Do not draw attention to it.`;
-  }
-  if (sessionFlags.goblin_killed) {
-    return `SCENE DIRECTIVE (this turn only): Weave in a brief moment — a young goblin appears at the edge of the market, scanning faces, looking for someone who isn't coming back. One sentence woven naturally into the scene. Do not draw attention to it.`;
-  }
-  // Fallback: DM never flagged Mik's fate — use an ambiguous callback that works either way
-  return `SCENE DIRECTIVE (this turn only): Weave in a brief, passing reference to a small goblin — glimpsed at the edge of the market, or mentioned in passing by a villager. One sentence, woven naturally into the scene. Do not explain who it is. Do not draw attention to it.`;
-}
-
-// Returns { injection, setsFlag, extraFlags } for the beat that fires this turn, or
-// { injection: null, setsFlag: null, extraFlags: null } if no beat fires.
-// extraFlags holds sets_timestamp / sets_message_count values the caller must persist.
-export function resolveTutorialBeat(campaign, messageCount, sessionFlags, nowMs = Date.now()) {
-  if (!campaign?.tutorial_beats?.length) return { injection: null, setsFlag: null, extraFlags: null };
-
-  for (const beat of campaign.tutorial_beats) {
-    // excludes_flag: string or array
-    if (beat.excludes_flag) {
-      const excluded = Array.isArray(beat.excludes_flag) ? beat.excludes_flag : [beat.excludes_flag];
-      if (excluded.some(f => sessionFlags[f])) continue;
-    }
-
-    if (beat.trigger_condition) {
-      const tc = beat.trigger_condition;
-      if (beat.requires_flag && !sessionFlags[beat.requires_flag]) continue;
-
-      if (tc.type === 'time_and_message') {
-        const plantTime = sessionFlags[tc.min_ms_after_timestamp_flag];
-        if (!plantTime) continue;
-        const enoughTime = nowMs - plantTime >= tc.min_ms;
-        const plantMessage = sessionFlags[tc.after_flag_message_key] || 0;
-        const enoughMessages = messageCount >= plantMessage + tc.min_messages_after_flag;
-        if (!enoughTime || !enoughMessages) continue;
-      } else if (tc.type === 'min_message') {
-        if (messageCount < tc.min_message) continue;
-      } else {
-        continue; // unknown type
-      }
-
-      let injection = beat.system_injection;
-      if (injection === '__MIK_CALLBACK__') {
-        injection = getMikCallbackInjection(sessionFlags);
-        if (!injection) continue;
-      }
-
-      const extraFlags = {};
-      if (beat.sets_timestamp) extraFlags[beat.sets_timestamp] = nowMs;
-      if (beat.sets_message_count) extraFlags[beat.sets_message_count] = messageCount;
-      return { injection, setsFlag: beat.sets_flag, extraFlags: Object.keys(extraFlags).length ? extraFlags : null };
-    }
-
-    // Simple trigger_at_message beat
-    if (beat.trigger_at_message !== messageCount) continue;
-    if (beat.requires_flag && !sessionFlags[beat.requires_flag]) continue;
-
-    let injection = beat.system_injection;
-    if (injection === '__MIK_CALLBACK__') {
-      injection = getMikCallbackInjection(sessionFlags);
-      if (!injection) continue;
-    }
-
-    const extraFlags = {};
-    if (beat.sets_timestamp) extraFlags[beat.sets_timestamp] = nowMs;
-    if (beat.sets_message_count) extraFlags[beat.sets_message_count] = messageCount;
-    return { injection, setsFlag: beat.sets_flag, extraFlags: Object.keys(extraFlags).length ? extraFlags : null };
-  }
-  return { injection: null, setsFlag: null, extraFlags: null };
-}
-
 // ─── Main DM Message Call ─────────────────────────────────────────────────────
 
 export async function sendDMMessage({
@@ -415,10 +340,9 @@ export async function callDM({
   character,
   campaign,
   persona,
-  messageCount,
   sessionFlags,
   npcMemory = [],
-  tutorialBeatInstruction = null,
+  mechanicNudge = null,
   campaignMemory = null,
   worldRegistry = null,
 }) {
@@ -439,7 +363,7 @@ export async function callDM({
     persona: safePersona,
     sessionFlags: sessionFlags || {},
     npcMemory: npcMemory || [],
-    beatInjection: tutorialBeatInstruction,
+    beatInjection: mechanicNudge,
     campaignMemory: campaignMemory || null,
     worldRegistry: worldRegistry || null,
   });
@@ -476,15 +400,14 @@ export async function callDM({
     locations: [],
   };
 
-  // state_updates: rename fields to match DMConversationScreen's applyStateUpdates
   const stateUpdates = {
     hp_change: su.hp_change || null,
     gold_change: su.loot?.gold || null,
     add_items: su.loot?.items?.length ? su.loot.items : null,
     session_flags: su.flags && Object.keys(su.flags).length > 0 ? su.flags : null,
     npc_memory: su.npc_updates?.length > 0 ? su.npc_updates : null,
-    add_conditions: su.conditions_applied?.length ? su.conditions_applied : null,
-    remove_conditions: su.conditions_removed?.length ? su.conditions_removed : null,
+    conditions_applied: su.conditions_applied?.length ? su.conditions_applied : null,
+    conditions_removed: su.conditions_removed?.length ? su.conditions_removed : null,
     enemies: su.enemies?.length ? su.enemies : null,
   };
 
@@ -507,7 +430,7 @@ export async function callDM({
 }
 
 // ─── Rolling Summary Generator ────────────────────────────────────────────────
-// Called every 15 player turns (25 for tutorial) to compress older history.
+// Called every 15 player turns to compress older history.
 // Replaces the oldest conversation context with a ~200-token narrative digest.
 
 export async function generateRollingSummary({ character, campaign, messages, sessionFlags, existingSummary = null }) {

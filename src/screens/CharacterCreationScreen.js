@@ -2,9 +2,10 @@ import React, { useState, useRef, useEffect, useCallback } from 'react';
 import SettingsModal from '../components/SettingsModal';
 import {
   View, Text, ScrollView, TouchableOpacity, TextInput,
-  StyleSheet, SafeAreaView, Image, Animated, PanResponder,
+  StyleSheet, Image, Animated, PanResponder,
   Dimensions,
 } from 'react-native';
+import { SafeAreaView } from 'react-native-safe-area-context';
 import { LinearGradient } from 'expo-linear-gradient';
 import { RACES, getRaceById } from '../constants/races';
 import { CLASSES, getClassById } from '../constants/classes';

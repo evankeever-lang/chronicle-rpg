@@ -1,5 +1,4 @@
 const { getDefaultConfig } = require('expo/metro-config');
-const path = require('path');
 
 const config = getDefaultConfig(__dirname);
 
@@ -8,5 +7,8 @@ const config = getDefaultConfig(__dirname);
 // Disable exports-field resolution so Metro falls back to the "main" field
 // (which correctly points to three.cjs).
 config.resolver.unstable_enablePackageExports = false;
+
+// Allow GLB/GLTF binary assets to be bundled via require()
+config.resolver.assetExts = [...config.resolver.assetExts, 'glb', 'gltf', 'bin'];
 
 module.exports = config;

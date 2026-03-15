@@ -27,10 +27,10 @@ Core game loop is working end-to-end on iOS:
 
 ### Build Now 🔨 In Progress
 Six workstreams to reach soft-launch readiness. Build in this order:
-1. **Combat state machine** ✅ — refinement sprint complete (see Combat Refinement Sprint section below); next: conditions system
-2. **World registry & name seeding** — data architecture, no UI, low risk
+1. **Combat state machine** ✅ — refinement sprint complete; conditions system in progress (last launch blocker)
+2. **World registry & name seeding** ✅ — worldRegistry in GameContext, injected in every API call, name pool per campaign
 3. **Tutorial beat finalisation** — refine existing + wire to new combat system
-4. **Music system** — self-contained once tone field exists in DM JSON
+4. **Music system** — tone routing infrastructure complete (currentTone in GameContext, setTone dispatched on every DM response); `music.js` stem architecture + crossfade engine not yet built
 5. **Art foundation** — scene_tag field in DM JSON + image mapping
 6. **Monetisation infrastructure** — RevenueCat + IAP last, once mechanics are stable
 
@@ -242,7 +242,8 @@ Full conditions list (Blinded, Charmed, Deafened, Grappled, Incapacitated, Invis
 Combat is launch-ready when:
 - [x] State machine transitions are airtight — no broken states, no stuck transitions
 - [x] `combat_end: true` fires on all exit conditions (kill, flee, surrender)
-- [x] Dedicated "COMBAT ENDED" system message renders before any AI narration
+- [x] Dedicated "COMBAT ENDED" system message renders inline in main chat before AI narration (not just History)
+- [x] Dead combatants: turn-skip logic in ADVANCE_TURN reducer; visually defeated in HUD but stay in turn order array
 - [x] CombatHUD persists for the entire combat encounter without disappearing
 - [x] Two-roll attack flow (attack → damage) works with correct math
 - [x] Critical hits double damage dice and trigger distinct feedback
@@ -516,14 +517,15 @@ chronicle-rpg/
 - Combat not ending on flee/surrender — DM prompt strengthened + `⚔️ COMBAT ENDED` banner added before AI narration
 - CombatHUD disappears after first action — fixed: `visible = combatState !== 'EXPLORATION'` (was excluding COMBAT_RESOLUTION)
 - Dice roller shows no context label — added `rollContext` prop; combat rolls now show "Roll for Initiative" / "Attack Roll" / "Damage Roll"
+- Dead combatants still taking turns — `ADVANCE_TURN` reducer skips combatants with `hp <= 0`; safety loop prevents infinite skip; defeated combatants greyed in HUD but kept in turn order array for display continuity
+- "COMBAT ENDED" banner only in History — `checkCombatEnd()` now pushes system message into main `messages` array; renders inline before AI outro
+- DiceRoller layout: "Read prompt" button overlaps roll context title — resolved by flex-row topBar layout (no absolute positioning)
 - Advantage/Disadvantage always visible — hidden by default; `hasAdvantage`/`hasDisadvantage` props derived from active conditions
 - Attack resolution single-roll — replaced with two-phase flow: attack d20 → damage die (separate roller, sequential)
 
 ## Known Issues Active
-- **Conditions not wired to combatTurnOrder** — DM JSON `conditions_applied`/`conditions_removed` only updates `character.conditions`, not combatants in turn order; `hasAdvantage`/`hasDisadvantage` auto-derive won't fire for combat conditions until this is wired
-- **Dead combatants still taking turns** — When an enemy or ally reaches 0 HP mid-round, the turn loop still processes their turn. Fix: in `resolveEnemyTurn` and turn-advance logic, skip any combatant with `hp <= 0`. Mark them visually as defeated in the HUD (greyed out / struck-through name) but leave them in the turn order array for display continuity.
-- **"COMBAT ENDED" banner only appears in History, not main chat** — The system message is being added to the adventure log but not rendered in the main `DMConversationScreen` message feed. Fix: ensure `checkCombatEnd()` pushes the system message into the same `messages` array that `DMMessage` renders from, not a separate history log. It must appear inline in the main chat before the AI outro narration renders.
-- **DiceRoller layout: "Read prompt" button overlaps roll context title** — The "Read prompt ↓" button is covering the "Perception Check" / roll context label. Fix: remove absolute positioning from the button; stack the modal content vertically — title → DC/modifier badges → "Read prompt" button → die graphic — with no overlap. The die and Roll button must remain below all header content.
+- **Conditions not wired to combatTurnOrder** — `applyStateUpdates` only updates `character.conditions`; DM JSON `conditions_applied`/`conditions_removed` are not propagated to `combatTurnOrder[n].conditions` for enemies or to the player's turn order entry. Enemy condition chips in HUD won't update mid-combat. Being fixed in conditions workstream.
+- **Campaign memory not injected at session start** — `campaignMemory` is generated and persisted at Chronicle Card end, but `buildSystemPrompt` doesn't yet inject it via `## Prior Session Memory` block when loading a continued session.
 
 ---
 

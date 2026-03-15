@@ -10,8 +10,8 @@ const path = require('path');
 const { parseGIF, decompressFrames } = require('gifuct-js');
 const { Jimp } = require('jimp');
 
-const GIF_PATH    = path.join(__dirname, '../src/assets/health_bar.gif');
-const OUT_DIR     = path.join(__dirname, '../src/assets/health_bar_frames');
+const GIF_PATH    = path.join(__dirname, '../src/assets/ui/health_bar.gif');
+const OUT_DIR     = path.join(__dirname, '../src/assets/ui/health_bar_frames');
 const FRAMES_JS   = path.join(OUT_DIR, 'frames.js');
 
 if (!fs.existsSync(OUT_DIR)) fs.mkdirSync(OUT_DIR, { recursive: true });

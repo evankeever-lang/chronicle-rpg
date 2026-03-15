@@ -2,13 +2,13 @@
 import React, { useState, useRef, useCallback, useEffect } from 'react';
 import {
   View, Text, StyleSheet, ScrollView, TextInput, TouchableOpacity,
-  SafeAreaView, KeyboardAvoidingView, Platform, Modal, StatusBar, Animated, Keyboard, Alert,
+  KeyboardAvoidingView, Platform, Modal, StatusBar, Animated, Keyboard, Alert,
 } from 'react-native';
+import { SafeAreaView } from 'react-native-safe-area-context';
 import { LinearGradient } from 'expo-linear-gradient';
 import * as Haptics from 'expo-haptics';
 import { useGame } from '../context/GameContext';
-import { callDM, generateSessionSummary, resolveTutorialBeat } from '../utils/claude';
-import { markTutorialCompleted } from '../utils/progress';
+import { callDM, generateSessionSummary } from '../utils/claude';
 import DMMessage from '../components/DMMessage';
 import DiceRoller from '../components/DiceRoller';
 import ChronicleCard from '../components/ChronicleCard';
@@ -21,6 +21,9 @@ import {
 import { getAbilityModifier, roll } from '../utils/dice';
 import { COLORS, FONTS, FONT_SIZES, SPACING, RADIUS } from '../constants/theme';
 import { stopMenuMusic } from '../utils/menuMusic';
+import GameplayMusicManager from '../components/GameplayMusicManager';
+import SfxManager from '../components/SfxManager';
+import { playSfx } from '../utils/sfx';
 
 const PERSONA_TYPING = {
   chronicler: 'Inscribing the record…',
@@ -74,12 +77,16 @@ export default function DMConversationScreen({ navigation }) {
     updateDeathSave,
     endCombat,
     resetCombat,
+    updateCombatantConditions,
     // Audio / art
     setTone,
     setSceneTag,
     // World registry & campaign memory
     worldRegistry,
     campaignMemory,
+    // Mechanic coverage
+    seenMechanics,
+    markMechanicSeen,
     // Preferences
     preferences,
   } = game;
@@ -142,7 +149,10 @@ export default function DMConversationScreen({ navigation }) {
   const applyStateUpdates = (updates) => {
     if (!updates) return;
     if (updates.hp_change && character?.currentHP != null) {
-      updateHP(character.currentHP + updates.hp_change);
+      const newHP = character.currentHP + updates.hp_change;
+      // First combat protection: player cannot die during their first encounter
+      const isFirstCombat = !seenMechanics.has('combat');
+      updateHP(isFirstCombat ? Math.max(1, newHP) : newHP);
     }
     if (updates.gold_change && character?.gold != null) {
       setCharacter({ gold: character.gold + updates.gold_change });
@@ -150,13 +160,15 @@ export default function DMConversationScreen({ navigation }) {
     if (updates.add_items?.length) {
       updates.add_items.forEach(item => addToInventory(item));
     }
-    if (updates.add_conditions?.length) {
-      setCharacter({ conditions: [...(character?.conditions || []), ...updates.add_conditions] });
+    if (updates.conditions_applied?.length) {
+      setCharacter({ conditions: [...new Set([...(character?.conditions || []), ...updates.conditions_applied])] });
+      updateCombatantConditions({ targetId: 'player', conditionsApplied: updates.conditions_applied, conditionsRemoved: [] });
     }
-    if (updates.remove_conditions?.length) {
+    if (updates.conditions_removed?.length) {
       setCharacter({
-        conditions: (character?.conditions || []).filter(c => !updates.remove_conditions.includes(c)),
+        conditions: (character?.conditions || []).filter(c => !updates.conditions_removed.includes(c)),
       });
+      updateCombatantConditions({ targetId: 'player', conditionsApplied: [], conditionsRemoved: updates.conditions_removed });
     }
     if (updates.session_flags) setSessionFlags(updates.session_flags);
     if (updates.npc_memory?.length) updates.npc_memory.forEach(npc => upsertNPC(npc));
@@ -480,19 +492,13 @@ export default function DMConversationScreen({ navigation }) {
   const [combatEndBanner, setCombatEndBanner] = useState(null);
   const [settingsVisible, setSettingsVisible] = useState(false);
 
-  // ── Player-turn message counter (only counts what player sends) ─────────────
-  const playerTurnCount = useRef(0);
-  // Tutorial beat counter — increments for every tutorial player message.
-  // playerTurnCount is exempt for tutorials (no daily-limit charge), but beats
-  // still need a reliable count. Starts at 1 so opening_scene (hardcoded to 1
-  // in startNewGame) doesn't re-fire on the player's first message.
-  const tutorialBeatCount = useRef(1);
-  const FREE_PLAYER_TURNS = 40;
-  const WARN_AT = FREE_PLAYER_TURNS - 8; // warn at 32
+  // Monetisation not yet implemented — always false until RevenueCat/IAP is wired
+  const isAtLimit = false;
 
-  const isAtLimit = playerTurnCount.current >= FREE_PLAYER_TURNS;
-  const isNearLimit = playerTurnCount.current >= WARN_AT && !isAtLimit;
-  const turnsLeft = FREE_PLAYER_TURNS - playerTurnCount.current;
+  // ── Player-turn counter — used for mechanic nudge thresholds ─────────────────
+  const turnCount = useRef(0);
+  // One-shot directive injected on the first round narration call after first combat starts
+  const firstCombatDirective = useRef(null);
 
   const scrollRef = useRef(null);
   const typingAnim = useRef(new Animated.Value(0)).current;
@@ -519,15 +525,6 @@ export default function DMConversationScreen({ navigation }) {
     }
   }, [isLoading]);
 
-  // Auto-trigger Chronicle when limit is hit (after DM responds)
-  const pendingLimitChronicle = useRef(false);
-  useEffect(() => {
-    if (pendingLimitChronicle.current && !isLoading) {
-      pendingLimitChronicle.current = false;
-      triggerChronicle();
-    }
-  }, [isLoading]);
-
   const triggerChronicle = async () => {
     setIsGeneratingSummary(true);
     try {
@@ -535,9 +532,6 @@ export default function DMConversationScreen({ navigation }) {
         character, campaign: selectedCampaign, sessionFlags, npcMemory, messages,
       });
       setSessionSummary(summary, epithet);
-      if (selectedCampaign?.isTutorial) {
-        await markTutorialCompleted();
-      }
     } catch (_) {}
     setIsGeneratingSummary(false);
     setChronicleVisible(true);
@@ -563,15 +557,10 @@ export default function DMConversationScreen({ navigation }) {
       };
       addMessage(openingMsg);
 
-      const beatResult = selectedCampaign?.isTutorial
-        ? resolveTutorialBeat(selectedCampaign, 1, sessionFlags) : null;
-      const beatInstruction = beatResult?.injection ?? null;
-
       const dmResponse = await callDM({
         messages: [{ role: 'user', content: openingMsg.content }],
         character, campaign: selectedCampaign, persona: selectedPersona,
-        messageCount: 1, sessionFlags, tutorialBeatInstruction: beatInstruction,
-        worldRegistry, campaignMemory,
+        sessionFlags, worldRegistry, campaignMemory,
       });
 
       addMessage({
@@ -583,10 +572,11 @@ export default function DMConversationScreen({ navigation }) {
       if (dmResponse.tone) setTone(dmResponse.tone);
       if (dmResponse.scene_tag) setSceneTag(dmResponse.scene_tag);
       if (dmResponse.requires_roll) {
+        if (!seenMechanics.has('skill_check')) markMechanicSeen('skill_check');
         setPendingRoll(dmResponse.requires_roll);
         setDiceVisible(true);
       }
-      if (dmResponse.combat_start) handleCombatStart(dmResponse);
+      if (dmResponse.combat_start) { playSfx('combat_start'); handleCombatStart(dmResponse); }
       if (dmResponse.combat_end) checkCombatEnd(activeEnemies, true);
     } catch (err) {
       addMessage({ id: `err_${Date.now()}`, role: 'assistant', content: { narration: 'The chronicler pauses... (Connection issue — try again.)' }, personaName: selectedPersona?.name, personaEmoji: selectedPersona?.emoji, timestamp: Date.now() });
@@ -595,16 +585,28 @@ export default function DMConversationScreen({ navigation }) {
     }
   };
 
+  // Returns a directive for the DM if a key mechanic hasn't been seen yet,
+  // or consumes the first-combat one-shot directive if set.
+  const getMechanicNudge = () => {
+    if (firstCombatDirective.current) {
+      const directive = firstCombatDirective.current;
+      firstCombatDirective.current = null;
+      return directive;
+    }
+    if (!seenMechanics.has('skill_check') && turnCount.current >= 3)
+      return 'Note: weave in a Perception or Investigation skill check naturally this turn.';
+    if (seenMechanics.has('skill_check') && !seenMechanics.has('combat') && turnCount.current >= 6)
+      return 'Note: introduce a threatening situation that leads to combat this turn.';
+    if (seenMechanics.has('combat') && !seenMechanics.has('inventory') && turnCount.current >= 12)
+      return 'Note: include a reward, loot drop, or item that prompts the player to use their inventory.';
+    return null;
+  };
+
   // isCombatInternal: true when called programmatically (combat summary), doesn't count as player turn
   const sendMessage = useCallback(async (text, isCombatInternal = false) => {
-    if (!text.trim() || isLoading || (isAtLimit && !isCombatInternal)) return;
+    if (!text.trim() || isLoading) return;
 
-    const isTutorial = selectedCampaign?.isTutorial;
-    if (!isCombatInternal) {
-      if (isTutorial) tutorialBeatCount.current += 1;
-      else playerTurnCount.current += 1;
-    }
-    const hitLimit = !isCombatInternal && !isTutorial && playerTurnCount.current >= FREE_PLAYER_TURNS;
+    if (!isCombatInternal) turnCount.current += 1;
     if (combatEndBanner) setCombatEndBanner(null);
 
     const userMsg = {
@@ -621,33 +623,10 @@ export default function DMConversationScreen({ navigation }) {
       const apiMessages = getDMApiMessages();
       apiMessages.push({ role: 'user', content: text.trim() });
 
-      const beatResult = selectedCampaign?.isTutorial
-        ? resolveTutorialBeat(selectedCampaign, tutorialBeatCount.current, sessionFlags) : null;
-      const beatInstruction = beatResult?.injection ?? null;
-
-      // Persist sets_flag + any sets_timestamp / sets_message_count from the fired beat.
-      if (beatResult?.beat) {
-        const flagsToSet = {};
-        if (beatResult.beat.sets_flag) flagsToSet[beatResult.beat.sets_flag] = true;
-        if (beatResult.extraFlags) Object.assign(flagsToSet, beatResult.extraFlags);
-        if (Object.keys(flagsToSet).length) setSessionFlags(flagsToSet);
-      }
-
-      // Tutorial end beat → queue Chronicle generation after DM responds
-      if (beatResult?.beat?.id === 'tutorial_end') {
-        pendingLimitChronicle.current = true;
-      }
-
-      // If we just hit the limit, ask DM to wrap up
-      const limitInstruction = hitLimit
-        ? 'This is the final message of the session. Bring the current scene to a satisfying close — resolve the immediate action, give a sense of what lies ahead, and end on an evocative final line. Keep it under 150 words.'
-        : null;
-
       const dmResponse = await callDM({
         messages: apiMessages,
         character, campaign: selectedCampaign, persona: selectedPersona,
-        messageCount: playerTurnCount.current, sessionFlags,
-        tutorialBeatInstruction: beatInstruction || limitInstruction,
+        sessionFlags, mechanicNudge: getMechanicNudge(),
         worldRegistry, campaignMemory,
       });
 
@@ -661,6 +640,7 @@ export default function DMConversationScreen({ navigation }) {
         applyStateUpdates(dmResponse.state_updates);
         if (dmResponse.state_updates.add_items?.length) {
           setLootCard({ items: dmResponse.state_updates.add_items, gold: dmResponse.state_updates.gold_change });
+          if (!seenMechanics.has('inventory')) markMechanicSeen('inventory');
         }
       }
 
@@ -668,8 +648,18 @@ export default function DMConversationScreen({ navigation }) {
       if (dmResponse.tone) setTone(dmResponse.tone);
       if (dmResponse.scene_tag) setSceneTag(dmResponse.scene_tag);
 
+      // ── Mechanic seen tracking ────────────────────────────────────────────────
+      if (dmResponse.requires_roll && !seenMechanics.has('skill_check')) {
+        markMechanicSeen('skill_check');
+      }
+
       // ── Combat state transitions ──────────────────────────────────────────────
       if (dmResponse.combat_start) {
+        playSfx('combat_start');
+        if (!seenMechanics.has('combat')) {
+          firstCombatDirective.current = "IMPORTANT: This is the player's first combat. Make the enemy weak — low HP, low AC. The fight should feel satisfying, not threatening.";
+          markMechanicSeen('combat');
+        }
         handleCombatStart(dmResponse);
       }
       if (dmResponse.combat_end) {
@@ -679,13 +669,9 @@ export default function DMConversationScreen({ navigation }) {
         handleEnemyAction(dmResponse.enemy_action);
       }
 
-      if (dmResponse.requires_roll && !hitLimit) {
+      if (dmResponse.requires_roll) {
         setPendingRoll(dmResponse.requires_roll);
         setDiceVisible(true);
-      }
-
-      if (hitLimit) {
-        pendingLimitChronicle.current = true;
       }
 
       if (dmResponse.system_text?.toLowerCase().includes('critical')) {
@@ -697,8 +683,8 @@ export default function DMConversationScreen({ navigation }) {
     } finally {
       setLoading(false);
     }
-  }, [isLoading, isAtLimit, messages, character, selectedCampaign, selectedPersona, sessionFlags,
-      addMessage, setLoading, applyStateUpdates,
+  }, [isLoading, messages, character, selectedCampaign, selectedPersona, sessionFlags,
+      seenMechanics, markMechanicSeen, addMessage, setLoading, applyStateUpdates,
       combatState, activeEnemies, combatRound, playerHpAtCombatStart,
       handleCombatStart, handleEnemyAction, resetCombat, setTone, setSceneTag]);
 
@@ -759,18 +745,26 @@ export default function DMConversationScreen({ navigation }) {
     ...(playerCombatant?.conditions || []),
     ...(character?.conditions || []),
   ];
-  const rollHasAdvantage = activeConditions.some(c =>
-    ['Advantage', 'Blessed', 'Helped', 'Reckless Attack'].includes(c)
-  );
-  const rollHasDisadvantage = activeConditions.some(c =>
-    ['Disadvantage', 'Poisoned', 'Frightened', 'Prone', 'Exhaustion', 'Restrained'].includes(c)
-  );
+  // Check target enemy conditions — Stunned/Prone grant attacker advantage
+  const targetEnemyCombatant = pendingCombatRoll?.targetEnemy
+    ? combatTurnOrder.find(c => c.id === pendingCombatRoll.targetEnemy.id || c.name === pendingCombatRoll.targetEnemy.name)
+    : null;
+  const targetConditions = targetEnemyCombatant?.conditions || [];
+  const rollHasAdvantage =
+    activeConditions.some(c => ['Advantage', 'Blessed', 'Helped', 'Reckless Attack'].includes(c)) ||
+    targetConditions.some(c => ['Stunned', 'Prone', 'Paralyzed', 'Unconscious'].includes(c));
+  const rollHasDisadvantage =
+    activeConditions.some(c => ['Disadvantage', 'Poisoned', 'Frightened', 'Prone', 'Exhaustion', 'Restrained'].includes(c));
 
   const hpColor = getHpColor(character?.currentHP ?? 1, character?.maxHP ?? 1);
   const hpPct = character?.maxHP > 0 ? (character.currentHP ?? 0) / character.maxHP : 1;
 
   return (
     <SafeAreaView style={styles.container}>
+      {/* Audio managers — render null, handle gameplay music and SFX */}
+      <GameplayMusicManager />
+      <SfxManager />
+
       <StatusBar barStyle="light-content" />
       <LinearGradient colors={[COLORS.background, '#080614']} style={StyleSheet.absoluteFill} />
 
@@ -808,13 +802,6 @@ export default function DMConversationScreen({ navigation }) {
         combatRound={combatRound}
         playerConditions={character?.conditions}
       />
-
-      {/* ── Turn counter warning ── */}
-      {isNearLimit && combatState === 'EXPLORATION' && (
-        <View style={styles.warnBar}>
-          <Text style={styles.warnText}>⚠ {turnsLeft} turns remaining this session</Text>
-        </View>
-      )}
 
       {/* ── Focused story view ── */}
       <KeyboardAvoidingView

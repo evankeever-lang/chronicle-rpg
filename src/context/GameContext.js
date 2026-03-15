@@ -66,22 +66,13 @@ const initialState = {
   // ── Cross-session persistent memory — generated at Chronicle Card, injected at session start ──
   campaignMemory: null,
 
-  // ── Aranthos world tracking — dynamic, persisted across sessions ──────────────
-  worldReputations: {
-    crown: 0,
-    iron_compact: 0,
-    thornbound: 0,
-    deep_accord: 0,
-    crimson_veil: 0,
-    ashen_circle: 0,
-    broken_chain: 0,
-  },
-  visitedLocations: [],   // array of location id strings
-  npcDispositions: {},    // { npc_id: integer delta } added to NPC_TEMPLATES.disposition_default
-  mainPlotStage: 'hidden', // 'hidden' | 'stirring' | 'fracturing' | 'breaking' | 'resolved'
-
   // ── User preferences ──────────────────────────────────────────────────────────
   preferences: { diceSkin: 'default', masterVolume: 100, musicVolume: 90, sfxVolume: 80 },
+
+  // ── Mechanic coverage — tracks which mechanics the player has encountered this session ──
+  // 'skill_check' | 'combat' | 'inventory'
+  // Resets each session. Drives contextual nudge injection in DMConversationScreen.
+  seenMechanics: new Set(),
 };
 
 function gameReducer(state, action) {
@@ -171,12 +162,12 @@ function gameReducer(state, action) {
       let nextIndex = (state.activeTurnIndex + 1) % len;
       let didCrossZero = nextIndex === 0;
       let safetyCounter = 0;
-      // Skip dead non-player combatants; guard against infinite loop if all enemies are down
-      while (
-        safetyCounter < len - 1 &&
-        !state.combatTurnOrder[nextIndex]?.isPlayer &&
-        (state.combatTurnOrder[nextIndex]?.hp ?? 1) <= 0
-      ) {
+      // Skip dead combatants (any) and stunned combatants (any); guard against infinite loop
+      while (safetyCounter < len - 1) {
+        const c = state.combatTurnOrder[nextIndex];
+        const isDead = (c?.hp ?? 1) <= 0;
+        const isStunned = c?.conditions?.includes('Stunned');
+        if (!isDead && !isStunned) break;
         safetyCounter++;
         const candidate = (nextIndex + 1) % len;
         if (candidate === 0 && nextIndex !== 0) didCrossZero = true;
@@ -196,6 +187,25 @@ function gameReducer(state, action) {
         return match ? { ...t, hp: match.hp } : t;
       });
       return { ...state, activeEnemies: updatedEnemies, combatTurnOrder: updatedOrder };
+    }
+
+    case 'UPDATE_COMBATANT_CONDITIONS': {
+      const { targetId, targetName, conditionsApplied = [], conditionsRemoved = [] } = action.payload;
+      const applyConditions = (existing) => {
+        let updated = [...(existing || [])];
+        updated = [...new Set([...updated, ...conditionsApplied])];
+        updated = updated.filter(c => !conditionsRemoved.includes(c));
+        return updated;
+      };
+      // Match by id first, fall back to name
+      const matchesCombatant = (c) => (targetId && c.id === targetId) || (targetName && c.name === targetName);
+      const updatedOrder = state.combatTurnOrder.map(c =>
+        matchesCombatant(c) ? { ...c, conditions: applyConditions(c.conditions) } : c
+      );
+      const updatedEnemies = state.activeEnemies.map(e =>
+        matchesCombatant(e) ? { ...e, conditions: applyConditions(e.conditions) } : e
+      );
+      return { ...state, combatTurnOrder: updatedOrder, activeEnemies: updatedEnemies };
     }
 
     case 'APPLY_PLAYER_COMBAT_DAMAGE': {
@@ -298,35 +308,8 @@ function gameReducer(state, action) {
     case 'SET_CAMPAIGN_MEMORY':
       return { ...state, campaignMemory: action.payload };
 
-    // ── Aranthos world tracking ───────────────────────────────────────────────
-    case 'UPDATE_WORLD_REPUTATION': {
-      const { faction, delta } = action.payload;
-      if (!(faction in state.worldReputations)) return state;
-      return {
-        ...state,
-        worldReputations: {
-          ...state.worldReputations,
-          [faction]: Math.max(-5, Math.min(5, state.worldReputations[faction] + delta)),
-        },
-      };
-    }
-
-    case 'VISIT_LOCATION': {
-      if (state.visitedLocations.includes(action.payload)) return state;
-      return { ...state, visitedLocations: [...state.visitedLocations, action.payload] };
-    }
-
-    case 'UPDATE_NPC_DISPOSITION': {
-      const { npcId, delta } = action.payload;
-      const current = state.npcDispositions[npcId] || 0;
-      return {
-        ...state,
-        npcDispositions: { ...state.npcDispositions, [npcId]: current + delta },
-      };
-    }
-
-    case 'SET_PLOT_STAGE':
-      return { ...state, mainPlotStage: action.payload };
+    case 'MARK_MECHANIC_SEEN':
+      return { ...state, seenMechanics: new Set([...state.seenMechanics, action.payload]) };
 
     case 'SET_DICE_SKIN':
       return { ...state, preferences: { ...state.preferences, diceSkin: action.payload } };
@@ -389,14 +372,12 @@ export function GameProvider({ children }) {
     return () => clearTimeout(autoSaveTimer.current);
   }, [state.uiMessages, state.character, state.sessionFlags, state.npcMemory]);
 
-  // ── Rolling summary — fires every 15 player turns (25 for tutorial first trigger) ──
+  // ── Rolling summary — fires every 15 player turns ──
   useEffect(() => {
     const count = state.sessionMessageCount;
     if (!state.isSessionActive || count === 0 || !state.campaign || !state.character?.name) return;
-    const isTutorial = state.campaign.tutorial_beats?.length > 0;
-    const firstTrigger = isTutorial ? 25 : 15;
-    const isFirstTrigger = count === firstTrigger;
-    const isRecurringTrigger = count > firstTrigger && (count - firstTrigger) % 15 === 0;
+    const isFirstTrigger = count === 15;
+    const isRecurringTrigger = count > 15 && (count - 15) % 15 === 0;
     if (!isFirstTrigger && !isRecurringTrigger) return;
 
     generateRollingSummary({
@@ -429,6 +410,8 @@ export function GameProvider({ children }) {
     dispatch({ type: 'UPDATE_ENTITY_REGISTRY', payload: updates });
   const setCampaignMemory = (memory) =>
     dispatch({ type: 'SET_CAMPAIGN_MEMORY', payload: memory });
+  const markMechanicSeen = (mechanic) => dispatch({ type: 'MARK_MECHANIC_SEEN', payload: mechanic });
+
   const setDiceSkin = (skin) => dispatch({ type: 'SET_DICE_SKIN', payload: skin });
   const setPreferences = (updates) => dispatch({ type: 'SET_PREFERENCES', payload: updates });
   const endSession = () => dispatch({ type: 'END_SESSION' });
@@ -454,6 +437,8 @@ export function GameProvider({ children }) {
     dispatch({ type: 'UPDATE_DEATH_SAVE', payload: result });
   const endCombat = () => dispatch({ type: 'END_COMBAT' });
   const resetCombat = () => dispatch({ type: 'RESET_COMBAT' });
+  const updateCombatantConditions = ({ targetId, targetName, conditionsApplied, conditionsRemoved }) =>
+    dispatch({ type: 'UPDATE_COMBATANT_CONDITIONS', payload: { targetId, targetName, conditionsApplied, conditionsRemoved } });
 
   // ── Audio / art ───────────────────────────────────────────────────────────────
   const setTone = (tone) => dispatch({ type: 'SET_TONE', payload: tone });
@@ -464,16 +449,6 @@ export function GameProvider({ children }) {
     dispatch({ type: 'UPDATE_WORLD_REGISTRY', payload: updates });
   const setRollingSummary = (summary) =>
     dispatch({ type: 'SET_ROLLING_SUMMARY', payload: summary });
-
-  // ── Aranthos world tracking ───────────────────────────────────────────────────
-  const updateWorldReputation = (faction, delta) =>
-    dispatch({ type: 'UPDATE_WORLD_REPUTATION', payload: { faction, delta } });
-  const visitLocation = (locationId) =>
-    dispatch({ type: 'VISIT_LOCATION', payload: locationId });
-  const updateNpcDisposition = (npcId, delta) =>
-    dispatch({ type: 'UPDATE_NPC_DISPOSITION', payload: { npcId, delta } });
-  const setPlotStage = (stage) =>
-    dispatch({ type: 'SET_PLOT_STAGE', payload: stage });
 
   return (
     <GameContext.Provider
@@ -503,6 +478,7 @@ export function GameProvider({ children }) {
         updateDeathSave,
         endCombat,
         resetCombat,
+        updateCombatantConditions,
         // Audio / art
         setTone,
         setSceneTag,
@@ -512,11 +488,8 @@ export function GameProvider({ children }) {
         // Entity registry & campaign memory
         updateEntityRegistry,
         setCampaignMemory,
-        // Aranthos world tracking
-        updateWorldReputation,
-        visitLocation,
-        updateNpcDisposition,
-        setPlotStage,
+        // Mechanic coverage
+        markMechanicSeen,
         // Preferences
         setDiceSkin,
         setPreferences,

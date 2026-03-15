@@ -55,12 +55,8 @@ export const getPersonaById = (id) => PERSONAS[id] || PERSONAS.chronicler;
 // Which persona to assign based on campaign genre
 export const getDefaultPersonaForCampaign = (campaignId) => {
   const map = {
-    tutorial: 'chronicler',
-    epic_quest: 'chronicler',
+    open_world: 'chronicler',
     dungeon_crawl: 'greybeard',
-    political_intrigue: 'trickster',
-    mystery: 'trickster',
-    horror: 'shadowweaver',
     random: 'chronicler',
   };
   return map[campaignId] || 'chronicler';

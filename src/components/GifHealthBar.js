@@ -19,7 +19,7 @@ import { Image, View, StyleSheet } from 'react-native';
 // Falls back gracefully to a plain bar if frames haven't been extracted yet.
 let FRAMES = [];
 try {
-  FRAMES = require('../assets/health_bar_frames/frames').default;
+  FRAMES = require('../assets/ui/health_bar_frames/frames').default;
 } catch (_) {
   // frames not yet extracted — fallback bar renders instead
 }

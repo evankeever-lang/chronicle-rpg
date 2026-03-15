@@ -4,7 +4,6 @@ import {
   Text,
   TouchableOpacity,
   StyleSheet,
-  SafeAreaView,
   Animated,
   Alert,
   Modal,
@@ -18,11 +17,12 @@ import { startMenuMusic } from '../utils/menuMusic';
 import { Splashes, DiceFaceArt } from '../assets';
 import { resetProgress } from '../utils/progress';
 import { useGame } from '../context/GameContext';
+import { SafeAreaView } from 'react-native-safe-area-context';
 import { COLORS, FONTS, FONT_SIZES, SPACING, RADIUS, SHADOWS } from '../constants/theme';
 import SettingsModal from '../components/SettingsModal';
 
 const DICE_SKINS = [
-  { key: 'default',   label: 'Classic',   image: null },
+  { key: 'default',   label: 'Classic',   image: DiceFaceArt.classic },
   { key: 'graystone', label: 'Graystone', image: DiceFaceArt.graystone },
   { key: 'obsidian',  label: 'Obsidian',  image: DiceFaceArt.obsidian  },
   { key: 'dragon',    label: 'Dragon',    image: DiceFaceArt.dragon    },
@@ -227,7 +227,7 @@ export default function MainMenuScreen({ navigation }) {
           )}
         </View>
 
-        <Text style={styles.footer}>More campaigns coming in future seasons</Text>
+
       </Animated.View>
 
       {/* ── Dice Skin modal ── */}
@@ -248,7 +248,7 @@ export default function MainMenuScreen({ navigation }) {
                     activeOpacity={0.8}
                   >
                     {skin.image ? (
-                      <Image source={skin.image} style={styles.skinCardImage} resizeMode="cover" />
+                      <Image source={skin.image} style={styles.skinCardImage} resizeMode="contain" />
                     ) : (
                       <View style={styles.skinCardClassic}>
                         <Text style={styles.skinCardClassicDie}>D6</Text>
@@ -436,7 +436,7 @@ const styles = StyleSheet.create({
     borderColor: COLORS.primary,
     shadowColor: COLORS.primary, shadowOpacity: 0.5, shadowRadius: 8, elevation: 6,
   },
-  skinCardImage: { width: 140, height: 100 },
+  skinCardImage: { width: 140, height: 140 },
   skinCardClassic: {
     width: 140, height: 100, alignItems: 'center', justifyContent: 'center',
     backgroundColor: COLORS.surface,
